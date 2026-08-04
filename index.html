@@ -1923,6 +1923,10 @@ table.amt tr.net-row.net-alert td:nth-child(3){color:var(--red);font-weight:700;
         <button class="btn-xl" id="dr-disc-cols-btn" onclick="_openDiscountAboveSchemePicker()" style="font-size:11px;padding:6px 12px;display:none;background:#fff;color:#1B2A4A;border-color:#1B2A4A;" title="Configure TOTAL DISC GIVEN, Discount Above Scheme, and reclassify auto-detected columns as Charge or Discount (3-tab picker)">⚙ Discount Columns</button>
         <button class="btn-xl" id="dr-dash-btn" onclick="exportAuditDashboardForCurrent()" style="font-size:11px;padding:6px 12px;display:none;background:#1B2A4A;color:#fff;border-color:#1B2A4A;" title="Download formatted audit dashboard for the selected dealership">📊 Audit Dashboard</button>
         <button class="btn-xl" id="dr-dash-all-btn" onclick="exportAuditDashboardForAll()" style="font-size:11px;padding:6px 12px;display:none;background:#1B2A4A;color:#fff;border-color:#1B2A4A;" title="Download formatted audit dashboard with one sheet per dealership">📊 All Dealer Dashboards</button>
+        <label id="dr-perf-checkbox-wrap" style="display:none;font-size:11px;color:var(--text);align-items:center;gap:6px;cursor:pointer;user-select:none;padding:6px 10px;border:1px solid var(--border2);border-radius:var(--radius);background:var(--surface);" title="When checked, the '📊 All Dealer Dashboards' export will include an extra 'Dealer Performance' worksheet with dealership-wise Insurance/Finance/EW/Accessories counts and percentages. Does not affect any other export.">
+          <input type="checkbox" id="dr-perf-checkbox" style="cursor:pointer;">
+          ☐ Dealer Performance
+        </label>
         <button class="btn-xl" id="dr-dash-all-sep-btn" onclick="exportAuditDashboardPerDealerZip()" style="font-size:11px;padding:6px 12px;display:none;background:#1B2A4A;color:#fff;border-color:#1B2A4A;" title="Download a ZIP containing one separate workbook per dealership (each with a Dashboard + Deals sheet)">📦 Separate Files (ZIP)</button>
         <button class="btn-xl" id="dr-combined-btn" onclick="openCombinedReportPicker()" style="font-size:11px;padding:6px 12px;display:none;background:#1B2A4A;color:#fff;border-color:#1B2A4A;" title="Build a single combined Excel report across multiple selected dealers">📊 Combined Report</button>
       </div>
@@ -1970,24 +1974,39 @@ table.amt tr.net-row.net-alert td:nth-child(3){color:var(--red);font-weight:700;
     </div>
   </div>
 
-  <!-- ── Payment Tracker upload card ─────────────────────────────── -->
+  <!-- ── Payment Tracker upload card (PV + CV) ─────────────────────── -->
   <div class="card" style="margin-bottom:14px;">
     <div class="card-label" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
       <span>💳 Payment Tracker — Upload to map receipts to bookings (by Booking Number)</span>
-      <span id="dr-pt-status" style="font-family:var(--mono);font-size:10px;color:var(--text3);text-transform:none;letter-spacing:0;">Not uploaded</span>
     </div>
+    <!-- PV upload -->
     <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap;border-top:1px dashed var(--border);padding-top:12px;">
+      <div style="font-size:12px;font-weight:600;color:var(--text2);min-width:150px;">💳 Payment Tracker PV</div>
       <div>
-        <label for="dr-pt-file" style="display:inline-block;font-size:12px;padding:8px 16px;background:var(--accent);color:#fff;border-radius:var(--radius);cursor:pointer;font-weight:500;">📂 Upload Tracker (xlsx / xls / csv)</label>
-        <input type="file" id="dr-pt-file" accept=".xlsx,.xls,.csv" style="display:none;" onchange="handlePaymentTrackerUpload(event)">
+        <label for="dr-pt-file" style="display:inline-block;font-size:12px;padding:8px 16px;background:var(--accent);color:#fff;border-radius:var(--radius);cursor:pointer;font-weight:500;">📂 Upload PV (xlsx / xls / csv)</label>
+        <input type="file" id="dr-pt-file" accept=".xlsx,.xls,.csv" style="display:none;" onchange="handlePaymentTrackerUpload(event,'PV')">
       </div>
-      <button class="btn-xl" id="dr-pt-clear-btn" onclick="clearPaymentTracker()" style="font-size:11px;padding:6px 12px;display:none;background:var(--surface2);color:var(--text2);">✕ Clear tracker</button>
-      <div style="font-family:var(--mono);font-size:10px;color:var(--text3);max-width:440px;line-height:1.6;">
-        💡 Tracker is matched to bookings by <strong>Booking Number</strong>. Modes recognised: Bank Transfer (RTGS/Credit/Debit/eWallet), Cash/DD, Cheque, DO, PO, Trade-In. Receipt &amp; Realized amounts are summed per mode. Anything else is ignored. Re-upload each session.
-      </div>
+      <span id="dr-pt-status" style="font-family:var(--mono);font-size:10px;color:var(--text3);text-transform:none;letter-spacing:0;">Not uploaded</span>
+      <button class="btn-xl" id="dr-pt-clear-btn" onclick="clearPaymentTracker('PV')" style="font-size:11px;padding:6px 12px;display:none;background:var(--surface2);color:var(--text2);">✕ Remove PV</button>
     </div>
+    <!-- CV upload -->
+    <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap;border-top:1px dashed var(--border);padding-top:12px;margin-top:12px;">
+      <div style="font-size:12px;font-weight:600;color:var(--text2);min-width:150px;">💳 Payment Tracker CV</div>
+      <div>
+        <label for="dr-pt-cv-file" style="display:inline-block;font-size:12px;padding:8px 16px;background:var(--accent);color:#fff;border-radius:var(--radius);cursor:pointer;font-weight:500;">📂 Upload CV (xlsx / xls / csv)</label>
+        <input type="file" id="dr-pt-cv-file" accept=".xlsx,.xls,.csv" style="display:none;" onchange="handlePaymentTrackerUpload(event,'CV')">
+      </div>
+      <span id="dr-pt-cv-status" style="font-family:var(--mono);font-size:10px;color:var(--text3);text-transform:none;letter-spacing:0;">Not uploaded</span>
+      <button class="btn-xl" id="dr-pt-cv-clear-btn" onclick="clearPaymentTracker('CV')" style="font-size:11px;padding:6px 12px;display:none;background:var(--surface2);color:var(--text2);">✕ Remove CV</button>
+    </div>
+    <div style="font-family:var(--mono);font-size:10px;color:var(--text3);max-width:640px;line-height:1.6;margin-top:12px;border-top:1px dashed var(--border);padding-top:10px;">
+      💡 PV and CV share the exact same header structure and are parsed with the same logic. If both are uploaded, their rows are appended together (never merged/deduped by Booking Number — a booking can have receipts split across both files) and matched to bookings by <strong>Booking Number</strong>. Modes recognised: Bank Transfer (RTGS/Credit/Debit/eWallet), Cash/DD, Cheque, DO, PO, Trade-In. Receipt &amp; Realized amounts are summed per mode across the combined dataset. Anything else is ignored. Re-upload each session.
+    </div>
+    <!-- Combined panel -->
+    <div id="dr-pt-combined-summary" style="display:none;border-top:1px dashed var(--border);padding-top:10px;margin-top:10px;font-size:11px;color:var(--text2);"></div>
     <div id="dr-pt-summary" style="display:none;border-top:1px dashed var(--border);padding-top:10px;margin-top:10px;font-size:11px;color:var(--text2);"></div>
   </div>
+
 
   <!-- KPI strip -->
   <div id="dr-kpi-strip" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin-bottom:14px;"></div>
@@ -13308,10 +13327,23 @@ function _drPTFindHeader(headers, candidates){
   return -1;
 }
 
-// Parse a single uploaded workbook into _drPT. Returns a summary object
-// {ok, message, receipts, bookings, unmatched, fileName} that the UI uses
-// for the status line + summary panel.
-function _drPTIngestWorkbook(wb, fileName){
+// ── Payment Tracker PV + CV support ──────────────────────────────────────
+// PV and CV trackers share IDENTICAL header structure, so both are parsed
+// by the SAME function below (parsePaymentTracker). Parsing is split from
+// aggregation so that PV's rows and CV's rows can be concatenated into one
+// combined record list BEFORE the existing aggregation/matching logic runs
+// — exactly once, on the combined set. This is the reusable function named
+// in the spec: parsePaymentTracker(file) -> PV Data / CV Data, then
+// Combined Data = [...PV Data, ...CV Data].
+
+// Parses a single uploaded workbook into normalised, per-receipt RECORDS —
+// no aggregation happens here. Returns {ok:false, message} on failure, or
+// on success: {ok:true, fileName, sheetName, records, skippedMode, skippedBN,
+// skippedSamples, realFound} where each record is {bn, modeKey, rcpt, real}.
+// This is the ONE reusable parser used for both Payment Tracker PV and
+// Payment Tracker CV uploads — they have identical headers, so there is no
+// separate PV/CV schema anywhere in this function.
+function parsePaymentTracker(wb, fileName){
   // Pick the first non-empty sheet
   let sheetName = null, ws = null;
   for(const n of wb.SheetNames){
@@ -13348,18 +13380,19 @@ function _drPTIngestWorkbook(wb, fileName){
   if(rcptIdx < 0) return {ok:false, message:'Could not find a "Receipt Amount" column in the tracker. Found columns: ' + headers.filter(Boolean).slice(0,12).join(', ')};
   // realIdx is optional — if missing, realized totals will all be 0
 
-  // Aggregate receipts by Booking Number + mode
-  const byBooking = {};
-  // Per-mode totals across the entire tracker — for the diagnostic panel.
-  // Initialised with every defined mode so a 0-count is still shown.
-  const byMode = {};
-  _DR_PT_MODES.forEach(m => { byMode[m.key] = {label:m.label, n:0, rcpt:0, real:0}; });
+  // Parse every row into a normalised record — {bn, modeKey, rcpt, real} —
+  // WITHOUT aggregating. Aggregation happens later, once, on the COMBINED
+  // record set (PV + CV together when both are uploaded). This is exactly
+  // what lets one Booking Number have receipts split across PV and CV: each
+  // file contributes its own records here, and they're summed together
+  // downstream, never overwritten.
+  const records = [];
   // Sample up to 20 distinct unrecognised mode strings so the user can see
   // exactly what the file contained that didn't match — invaluable when a
   // mode like 'PO' is suspected to have been skipped due to whitespace,
   // encoding, or a typo we don't yet handle.
   const skippedSamplesSet = new Map();   // raw string -> count
-  let totalReceipts = 0, skippedMode = 0, skippedBN = 0;
+  let skippedMode = 0, skippedBN = 0;
   for(let i=headerRowIdx+1; i<rows.length; i++){
     const r = rows[i];
     if(!r || !r.length) continue;
@@ -13375,7 +13408,54 @@ function _drPTIngestWorkbook(wb, fileName){
       continue;
     }
     const rcpt = fN(r[rcptIdx]);
-    const real = realIdx >= 0 ? fN(r[realIdx]) : 0;
+    let real = realIdx >= 0 ? fN(r[realIdx]) : 0;
+    // ── Cash/DD auto-realization rule ──
+    // For Receipt Mode = "Cash/DD" (modeKey 'CASH_DD'), Realized Amount is
+    // always forced to equal Receipt Amount — cash/DD receipts are treated
+    // as realized the moment they're received, regardless of what (if
+    // anything) was entered in the Realized Amount column of the uploaded
+    // tracker. This runs here, at row-parse time, so every downstream
+    // calculation (reconciliation, summaries, reports) sees the corrected
+    // value automatically. No other Receipt Mode (Cheque, RTGS, Credit,
+    // Debit, eWallet, Trade-In, DO, PO, Refund, etc.) is affected.
+    if(modeKey === 'CASH_DD'){
+      real = rcpt;
+    }
+    records.push({bn, modeKey, rcpt, real});
+  }
+  // Convert skipped-samples map into a top-N sorted array for the UI
+  const skippedSamples = Array.from(skippedSamplesSet.entries())
+    .sort((a,b) => b[1] - a[1])
+    .slice(0, 20)
+    .map(([val, n]) => ({val, n}));
+
+  return {
+    ok: true,
+    fileName: fileName,
+    sheetName: sheetName,
+    records: records,
+    skippedMode: skippedMode,
+    skippedBN: skippedBN,
+    skippedSamples: skippedSamples,
+    realFound: realIdx >= 0
+  };
+}
+
+// Aggregate a COMBINED array of parsed records (from parsePaymentTracker —
+// PV alone, CV alone, or PV+CV concatenated) into byBooking + byMode. This
+// is the "existing Payment Tracker calculation", run exactly ONCE on
+// whatever record set is passed in. Duplicate Booking Numbers are never
+// collapsed — every record is added to that booking's running totals, so a
+// Booking Number with receipts in both PV and CV (or multiple rows within
+// one file) correctly accumulates all of them (e.g. B001 PV ₹50,000 + B001
+// CV ₹20,000 → ₹70,000 total for B001).
+function _drPTAggregateRecords(records){
+  const byBooking = {};
+  const byMode = {};
+  _DR_PT_MODES.forEach(m => { byMode[m.key] = {label:m.label, n:0, rcpt:0, real:0}; });
+  let totalReceipts = 0;
+  records.forEach(rec => {
+    const {bn, modeKey, rcpt, real} = rec;
     if(!byBooking[bn]){
       byBooking[bn] = {_totalRcpt:0, _totalReal:0, _totalRefund:0, _receipts:0};
       _DR_PT_MODES.forEach(m => { byBooking[bn][m.key] = {rcpt:0, real:0}; });
@@ -13396,23 +13476,23 @@ function _drPTIngestWorkbook(wb, fileName){
     byMode[modeKey].rcpt += rcpt;
     byMode[modeKey].real += real;
     totalReceipts++;
-  }
-  // Convert skipped-samples map into a top-N sorted array for the UI
-  const skippedSamples = Array.from(skippedSamplesSet.entries())
-    .sort((a,b) => b[1] - a[1])
-    .slice(0, 20)
-    .map(([val, n]) => ({val, n}));
+  });
+  return {byBooking, byMode, totalReceipts};
+}
 
-  // Match against Extractor booking numbers
-  // We track BOTH directions:
-  //   matched   = tracker bookings that exist in Extractor data
-  //   unmatched = tracker bookings with no Extractor row (orphans)
-  //   xMatched  = Extractor rows that have a tracker entry (these will use
-  //               ptr._totalRcpt — the "good" path with PO included)
-  //   xUnmatched = Extractor rows with NO tracker entry (these will fall
-  //                back to the Extractor's 'Total payment receipts' column —
-  //                which does NOT know about PO and is the source of the
-  //                "PO not showing in Summary of Deal" symptom).
+// Match an aggregated byBooking map against Extractor booking numbers.
+// Extracted unchanged from the original _drPTIngestWorkbook so PV-only,
+// CV-only, and combined PV+CV all go through identical matching logic.
+// We track BOTH directions:
+//   matched   = tracker bookings that exist in Extractor data
+//   unmatched = tracker bookings with no Extractor row (orphans)
+//   xMatched  = Extractor rows that have a tracker entry (these will use
+//               ptr._totalRcpt — the "good" path with PO included)
+//   xUnmatched = Extractor rows with NO tracker entry (these will fall
+//                back to the Extractor's 'Total payment receipts' column —
+//                which does NOT know about PO and is the source of the
+//                "PO not showing in Summary of Deal" symptom).
+function _drPTMatchExtractor(byBooking){
   const bnIdxX = actualHeaders.indexOf('Booking Number');
   let matched = 0, unmatched = 0;
   let xMatched = 0, xUnmatched = 0;
@@ -13432,36 +13512,98 @@ function _drPTIngestWorkbook(wb, fileName){
       else { xUnmatched++; if(xUnmatchedList.length < 50) xUnmatchedList.push(xbn); }
     });
   }
+  return {
+    matched, unmatched,
+    unmatchedList: unmatchedList.slice(0, 50),
+    xMatched, xUnmatched,
+    xUnmatchedList,
+    extractorTotal: actualRows.length
+  };
+}
+
+// ── PV / CV tracker state ──────────────────────────────────────────────
+// Each slot holds one uploaded file's PARSED (not aggregated) records plus
+// its own parse-time diagnostics. Uploading, replacing, or removing either
+// file just updates its slot and calls _drPTRebuild() — nothing else in the
+// app needs to know PV/CV exist separately; every other consumer keeps
+// reading the single combined `_drPT` global exactly as before.
+const _drPTEmptySlot = () => ({loaded:false, fileName:null, sheetName:null, records:[], skippedMode:0, skippedBN:0, skippedSamples:[], realFound:false});
+let _drPTFiles = { PV: _drPTEmptySlot(), CV: _drPTEmptySlot() };
+
+// Rebuilds the combined `_drPT` global from whichever of PV/CV are
+// currently loaded. This is the ONE place that runs the existing
+// aggregation + Extractor-matching logic, and it always runs on the
+// COMBINED record set (PV rows + CV rows appended, never merged/deduped by
+// Booking Number) — so a Booking Number with receipts split across PV and
+// CV correctly sums to its true total. Called after every upload, replace,
+// or remove of either file.
+function _drPTRebuild(){
+  const pv = _drPTFiles.PV, cv = _drPTFiles.CV;
+  if(!pv.loaded && !cv.loaded){
+    _drPT = {loaded:false, byBooking:{}};
+    return;
+  }
+  // Append rows — PV Data + CV Data, never merged/deduped by Booking Number.
+  const combinedRecords = [].concat(pv.loaded ? pv.records : [], cv.loaded ? cv.records : []);
+  const {byBooking, byMode, totalReceipts} = _drPTAggregateRecords(combinedRecords);
+  const match = _drPTMatchExtractor(byBooking);
+
+  // Merge skipped-mode sample maps from whichever files are loaded, so the
+  // diagnostics panel reflects both files at once (top 20 by count).
+  const sampleMap = new Map();
+  [pv, cv].forEach(f => {
+    if(!f.loaded) return;
+    (f.skippedSamples || []).forEach(s => sampleMap.set(s.val, (sampleMap.get(s.val) || 0) + s.n));
+  });
+  const skippedSamples = Array.from(sampleMap.entries()).sort((a,b) => b[1]-a[1]).slice(0,20).map(([val,n]) => ({val,n}));
+
+  const fileNameParts = [];
+  if(pv.loaded) fileNameParts.push('PV: ' + pv.fileName);
+  if(cv.loaded) fileNameParts.push('CV: ' + cv.fileName);
 
   _drPT = {
     loaded: true,
-    fileName: fileName,
-    sheetName: sheetName,
+    fileName: fileNameParts.join('  +  '),
+    sheetName: [pv.loaded ? pv.sheetName : null, cv.loaded ? cv.sheetName : null].filter(Boolean).join(', '),
     receiptCount: totalReceipts,
     bookingCount: Object.keys(byBooking).length,
-    matchedCount: matched,
-    unmatchedCount: unmatched,
-    unmatchedList: unmatchedList.slice(0, 50), // cap for UI
-    extractorMatched: xMatched,                // # Extractor rows with tracker data
-    extractorUnmatched: xUnmatched,            // # Extractor rows WITHOUT tracker data (= fallback path)
-    extractorTotal: actualRows.length,
-    extractorUnmatchedList: xUnmatchedList,    // up to 50 unmatched Extractor BNs
-    skippedMode: skippedMode,
-    skippedBN: skippedBN,
-    skippedSamples: skippedSamples,            // [{val, n}, ...] up to 20
+    matchedCount: match.matched,
+    unmatchedCount: match.unmatched,
+    unmatchedList: match.unmatchedList,
+    extractorMatched: match.xMatched,
+    extractorUnmatched: match.xUnmatched,
+    extractorTotal: match.extractorTotal,
+    extractorUnmatchedList: match.xUnmatchedList,
+    skippedMode: (pv.loaded ? pv.skippedMode : 0) + (cv.loaded ? cv.skippedMode : 0),
+    skippedBN: (pv.loaded ? pv.skippedBN : 0) + (cv.loaded ? cv.skippedBN : 0),
+    skippedSamples: skippedSamples,
     byBooking: byBooking,
-    byMode: byMode,                            // per-mode global tally
-    realFound: realIdx >= 0
+    byMode: byMode,
+    realFound: (pv.loaded && pv.realFound) || (cv.loaded && cv.realFound),
+    // ── Combined-tracker panel stats (🔗 Combined Payment Tracker) ──
+    pvLoaded: pv.loaded, cvLoaded: cv.loaded,
+    pvFileName: pv.fileName, cvFileName: cv.fileName,
+    pvRecordCount: pv.loaded ? pv.records.length : 0,
+    cvRecordCount: cv.loaded ? cv.records.length : 0,
+    combinedRecordCount: combinedRecords.length,
+    uniqueBookingCount: Object.keys(byBooking).length
   };
-  return {ok:true};
 }
 
 // Reads the chosen file (xlsx/xls/csv) and triggers ingestion.
-function handlePaymentTrackerUpload(ev){
+// `which` is 'PV' or 'CV' — both files share identical headers, so both
+// call the SAME parsePaymentTracker() function; only which _drPTFiles slot
+// they're stored in differs. After storing, _drPTRebuild() re-runs the
+// combined aggregation exactly once (see above), so uploading, replacing,
+// or removing either file automatically keeps everything downstream (the
+// combined `_drPT` global) correct.
+function handlePaymentTrackerUpload(ev, which){
+  which = (which === 'CV') ? 'CV' : 'PV';
+  const idPrefix = which === 'CV' ? 'dr-pt-cv-' : 'dr-pt-';
   const file = ev.target.files && ev.target.files[0];
   if(!file) return;
   // Show a brief "reading..." state
-  const statusEl = document.getElementById('dr-pt-status');
+  const statusEl = document.getElementById(idPrefix + 'status');
   statusEl.textContent = 'Reading ' + file.name + ' ...';
   statusEl.style.color = 'var(--text2)';
 
@@ -13470,15 +13612,26 @@ function handlePaymentTrackerUpload(ev){
     try {
       const data = new Uint8Array(e.target.result);
       const wb = XLSX.read(data, {type:'array'});
-      const res = _drPTIngestWorkbook(wb, file.name);
+      const res = parsePaymentTracker(wb, file.name);
       if(!res.ok){
         statusEl.textContent = '✗ ' + res.message;
         statusEl.style.color = 'var(--red)';
-        document.getElementById('dr-pt-summary').style.display = 'none';
-        document.getElementById('dr-pt-clear-btn').style.display = 'none';
-        _drPT = {loaded:false, byBooking:{}};
+        _drPTFiles[which] = _drPTEmptySlot();
+        _drPTRebuild();
+        _drRenderPTStatus();
         return;
       }
+      _drPTFiles[which] = {
+        loaded: true,
+        fileName: res.fileName,
+        sheetName: res.sheetName,
+        records: res.records,
+        skippedMode: res.skippedMode,
+        skippedBN: res.skippedBN,
+        skippedSamples: res.skippedSamples,
+        realFound: res.realFound
+      };
+      _drPTRebuild();
       _drRenderPTStatus();
       // Re-render the table so the new columns appear
       if(document.getElementById('dr-dealer-select').value){
@@ -13487,7 +13640,9 @@ function handlePaymentTrackerUpload(ev){
     } catch(err){
       statusEl.textContent = '✗ Could not parse file: ' + (err.message || err);
       statusEl.style.color = 'var(--red)';
-      _drPT = {loaded:false, byBooking:{}};
+      _drPTFiles[which] = _drPTEmptySlot();
+      _drPTRebuild();
+      _drRenderPTStatus();
     }
     // Reset the file input so the same file can be re-uploaded
     ev.target.value = '';
@@ -13500,18 +13655,64 @@ function handlePaymentTrackerUpload(ev){
   reader.readAsArrayBuffer(file);
 }
 
-function _drRenderPTStatus(){
-  if(!_drPT.loaded){
-    document.getElementById('dr-pt-status').textContent = 'Not uploaded';
-    document.getElementById('dr-pt-status').style.color = 'var(--text3)';
-    document.getElementById('dr-pt-summary').style.display = 'none';
-    document.getElementById('dr-pt-clear-btn').style.display = 'none';
+// Renders the PV status line + clear button (file name / row count, or
+// "Not uploaded"). Called for 'PV' and 'CV' independently — each just
+// reflects its own _drPTFiles slot; the combined diagnostics below (which
+// need the merged PV+CV result) are rendered separately by
+// _drRenderPTCombinedPanel().
+function _drRenderPTFileStatus(which){
+  const idPrefix = which === 'CV' ? 'dr-pt-cv-' : 'dr-pt-';
+  const f = _drPTFiles[which];
+  const statusEl = document.getElementById(idPrefix + 'status');
+  const clearBtn = document.getElementById(idPrefix + 'clear-btn');
+  if(!statusEl) return;
+  if(!f.loaded){
+    statusEl.textContent = 'Not uploaded';
+    statusEl.style.color = 'var(--text3)';
+    if(clearBtn) clearBtn.style.display = 'none';
     return;
   }
-  const s = document.getElementById('dr-pt-status');
-  s.textContent = '✓ ' + _drPT.fileName + ' · ' + _drPT.receiptCount.toLocaleString('en-IN') + ' receipts across ' + _drPT.bookingCount.toLocaleString('en-IN') + ' bookings';
-  s.style.color = 'var(--green)';
-  document.getElementById('dr-pt-clear-btn').style.display = '';
+  statusEl.textContent = '✓ ' + f.fileName + ' · ' + f.records.length.toLocaleString('en-IN') + ' rows';
+  statusEl.style.color = 'var(--green)';
+  if(clearBtn) clearBtn.style.display = '';
+}
+
+// Renders the "🔗 Combined Payment Tracker" panel — PV Records / CV Records
+// / Combined Records / Unique Booking Numbers. Visible whenever at least
+// one of PV/CV is loaded (single-file uploads still show a useful summary;
+// it just reads 0 for whichever slot is empty).
+function _drRenderPTCombinedPanel(){
+  const panel = document.getElementById('dr-pt-combined-summary');
+  if(!panel) return;
+  if(!_drPT.loaded){
+    panel.style.display = 'none';
+    return;
+  }
+  const n = (v) => Number(v||0).toLocaleString('en-IN');
+  let html = '<div style="font-family:var(--mono);font-size:9px;text-transform:uppercase;letter-spacing:.08em;color:var(--text3);margin-bottom:6px;">🔗 Combined Payment Tracker</div>';
+  html += '<div style="display:flex;gap:20px;flex-wrap:wrap;">';
+  html += '<div>PV Records: <strong style="color:var(--text);">'+n(_drPT.pvRecordCount)+'</strong></div>';
+  html += '<div>CV Records: <strong style="color:var(--text);">'+n(_drPT.cvRecordCount)+'</strong></div>';
+  html += '<div>Combined Records: <strong style="color:var(--accent);">'+n(_drPT.combinedRecordCount)+'</strong></div>';
+  html += '<div>Unique Booking Numbers: <strong style="color:var(--accent);">'+n(_drPT.uniqueBookingCount)+'</strong></div>';
+  html += '</div>';
+  panel.innerHTML = html;
+  panel.style.display = '';
+}
+
+// Renders the detailed diagnostics panel (mode breakdown, skipped samples,
+// unmatched lists) from the COMBINED `_drPT` global — unchanged logic from
+// before PV/CV support existed, just now always reflecting whichever of
+// PV/CV (or both) are currently loaded.
+function _drRenderPTStatus(){
+  _drRenderPTFileStatus('PV');
+  _drRenderPTFileStatus('CV');
+  _drRenderPTCombinedPanel();
+
+  if(!_drPT.loaded){
+    document.getElementById('dr-pt-summary').style.display = 'none';
+    return;
+  }
 
   const summ = document.getElementById('dr-pt-summary');
   let html = '<div style="display:flex;gap:20px;flex-wrap:wrap;">';
@@ -13539,16 +13740,17 @@ function _drRenderPTStatus(){
   }
   html += '</div>';
 
-  // ── NEW: Per-mode receipts breakdown ─────────────────────────────
-  // Surfaces exactly how many rows + ₹ were classified into each mode.
-  // This is the diagnostic that confirms whether 'PO' rows are being
-  // recognised and counted. If the PO row here shows 0 receipts but the
-  // tracker file has PO entries, the regex isn't matching what's in the
-  // cell — open the "Skipped mode samples" panel below to see why.
+  // ── Per-mode receipts breakdown ─────────────────────────────
+  // Surfaces exactly how many rows + ₹ were classified into each mode,
+  // across the COMBINED PV+CV dataset. This is the diagnostic that confirms
+  // whether 'PO' rows are being recognised and counted. If the PO row here
+  // shows 0 receipts but the tracker file has PO entries, the regex isn't
+  // matching what's in the cell — open the "Skipped mode samples" panel
+  // below to see why.
   if(_drPT.byMode){
     const fmt = (n) => '₹' + Number(n||0).toLocaleString('en-IN');
     html += '<div style="margin-top:10px;padding:8px 10px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;">';
-    html += '<div style="font-family:var(--mono);font-size:9px;text-transform:uppercase;letter-spacing:.08em;color:var(--text3);margin-bottom:6px;">Receipts by mode (as parsed)</div>';
+    html += '<div style="font-family:var(--mono);font-size:9px;text-transform:uppercase;letter-spacing:.08em;color:var(--text3);margin-bottom:6px;">Receipts by mode (as parsed, PV + CV combined)</div>';
     html += '<table style="font-size:11px;font-family:var(--mono);border-collapse:collapse;width:100%;">';
     html += '<thead><tr><th style="text-align:left;padding:3px 8px 3px 0;color:var(--text3);font-weight:500;">Mode</th><th style="text-align:right;padding:3px 8px;color:var(--text3);font-weight:500;">Rows</th><th style="text-align:right;padding:3px 8px;color:var(--text3);font-weight:500;">Receipt ₹</th><th style="text-align:right;padding:3px 0 3px 8px;color:var(--text3);font-weight:500;">Realized ₹</th></tr></thead><tbody>';
     _DR_PT_MODES.forEach(m => {
@@ -13566,10 +13768,11 @@ function _drRenderPTStatus(){
     html += '</div>';
   }
 
-  // ── NEW: Skipped-mode-string samples ─────────────────────────────
+  // ── Skipped-mode-string samples ─────────────────────────────
   // When a mode value doesn't match any of the 6 known patterns we
   // can't classify the row. We capture up to 20 distinct sample
-  // strings so the user can immediately see what's being missed.
+  // strings (merged across PV + CV) so the user can immediately see
+  // what's being missed.
   if(_drPT.skippedSamples && _drPT.skippedSamples.length > 0){
     html += '<details style="margin-top:8px;font-size:11px;"><summary style="cursor:pointer;color:var(--amber);">⚠ Show '+_drPT.skippedSamples.length+' unrecognised mode value'+(_drPT.skippedSamples.length===1?'':'s')+' (top 20)</summary>';
     html += '<div style="font-family:var(--mono);font-size:10px;color:var(--text2);padding:6px 0;line-height:1.7;">';
@@ -13583,7 +13786,7 @@ function _drRenderPTStatus(){
   if(_drPT.unmatchedList.length > 0){
     html += '<details style="margin-top:8px;font-size:11px;"><summary style="cursor:pointer;color:var(--text3);">Show first '+_drPT.unmatchedList.length+' tracker-side unmatched booking numbers</summary><div style="font-family:var(--mono);font-size:10px;color:var(--text3);padding:6px 0;line-height:1.7;word-break:break-all;">'+_drPT.unmatchedList.map(_drEsc).join(', ')+'</div></details>';
   }
-  // NEW: Extractor-side unmatched — these are the deals that will silently
+  // Extractor-side unmatched — these are the deals that will silently
   // fall back to the dealer's internal column in the Summary of Deal sheet.
   if(_drPT.extractorUnmatchedList && _drPT.extractorUnmatchedList.length > 0){
     html += '<details style="margin-top:8px;font-size:11px;"><summary style="cursor:pointer;color:var(--amber);">⚠ Show first '+_drPT.extractorUnmatchedList.length+' Extractor deals with NO tracker match (will use dealer column → may miss PO)</summary><div style="font-family:var(--mono);font-size:10px;color:var(--text3);padding:6px 0;line-height:1.7;word-break:break-all;">'+_drPT.extractorUnmatchedList.map(_drEsc).join(', ')+'</div></details>';
@@ -13592,8 +13795,15 @@ function _drRenderPTStatus(){
   summ.style.display = '';
 }
 
-function clearPaymentTracker(){
-  _drPT = {loaded:false, byBooking:{}};
+// Removes one uploaded tracker file ('PV' or 'CV'). If the other file is
+// still loaded, the combined dataset is automatically recalculated from
+// just the remaining file (per spec: "If the user removes one file →
+// Recalculate using the remaining file"). If neither is loaded, `_drPT`
+// goes back to its empty/not-loaded state.
+function clearPaymentTracker(which){
+  which = (which === 'CV') ? 'CV' : 'PV';
+  _drPTFiles[which] = _drPTEmptySlot();
+  _drPTRebuild();
   _drRenderPTStatus();
   if(document.getElementById('dr-dealer-select').value){
     renderDealerReportTable();
@@ -14065,6 +14275,7 @@ function renderDealerReportTab(){
     document.getElementById('dr-dash-all-btn').style.display = 'none';
     const _sepHide = document.getElementById('dr-dash-all-sep-btn'); if(_sepHide) _sepHide.style.display = 'none';
     const _cbHide = document.getElementById('dr-combined-btn'); if(_cbHide) _cbHide.style.display = 'none';
+    const _perfCbHide = document.getElementById('dr-perf-checkbox-wrap'); if(_perfCbHide) _perfCbHide.style.display = 'none';
     return;
   }
   const dealers = _drGetDealerships();
@@ -14080,6 +14291,7 @@ function renderDealerReportTab(){
   document.getElementById('dr-dash-all-btn').style.display = '';
   const _sepShow = document.getElementById('dr-dash-all-sep-btn'); if(_sepShow) _sepShow.style.display = '';
   const _cbShow = document.getElementById('dr-combined-btn'); if(_cbShow) _cbShow.style.display = (dealers.length >= 1) ? '' : 'none';
+  const _perfCbShow = document.getElementById('dr-perf-checkbox-wrap'); if(_perfCbShow) _perfCbShow.style.display = (dealers.length >= 1) ? 'flex' : 'none';
   document.getElementById('dr-disc-cols-btn').style.display = '';
   if(sel.value) renderDealerReportTable();
   else {
@@ -14455,6 +14667,8 @@ const _AD_STYLE = {
 };
 function _adARGB(h){ return 'FF'+h; }
 function _adColIdx(letter){ let n=0; for(let i=0;i<letter.length;i++) n=n*26+(letter.charCodeAt(i)-64); return n; }
+// Reverse of _adColIdx: 1-based column index -> Excel letter (1='A', 27='AA', etc.)
+function _adColLetter(n){ let s=''; while(n>0){ const r=(n-1)%26; s=String.fromCharCode(65+r)+s; n=Math.floor((n-1)/26); } return s; }
 function _adStyle(cell, opts){
   opts = opts || {};
   if(opts.fill) cell.fill = {type:'pattern', pattern:'solid', fgColor:{argb: _adARGB(opts.fill)}};
@@ -15195,7 +15409,7 @@ function _adAvgPerCarDisc(rowsList){
 // Main Report 2 builder. `m` is the metrics object from _adComputeMetrics
 // (which already has totals, counts, top models, benchmarks). We also
 // recompute a few things specific to Report 2's monthly breakdowns.
-function _adBuildReport2Sheet(ws, m, dealSheetName){
+function _adBuildReport2Sheet(ws, m, dealSheetName, headerColMap){
   const S = _AD_STYLE;
   // The sheet name to reference for all SUMIF/COUNTIF/SUMIFS formulas.
   // Defaults to '1_Summary_of_Deal' (single-dealer download); the all-dealers
@@ -15204,13 +15418,51 @@ function _adBuildReport2Sheet(ws, m, dealSheetName){
   // Wrap with single quotes for Excel formula syntax (handles spaces/digits/special chars)
   // Single quotes inside the name itself must be doubled per Excel's escaping rules.
   const SOD = `'${sheetName.replace(/'/g, "''")}'`;
+  // ── Dynamic HEADER-NAME -> column-letter lookup ──
+  // headerColMap comes from _adBuildSummaryOfDealSheet()'s return value and
+  // reflects the ACTUAL columns just written to the deal-summary sheet. Every
+  // cross-sheet formula below is built through col()/rng() so nothing in this
+  // function depends on a fixed column letter — if a column is ever added,
+  // removed, or reordered in _adBuildSummaryOfDealSheet, these formulas keep
+  // pointing at the right place automatically. This is the fix for the
+  // recurring "#REF! after a column shift" class of bug.
+  const _adMissingHeaders = new Set();
+  const col = (name) => {
+    const c = headerColMap && headerColMap[name];
+    if(!c){
+      // Should never happen in practice — headerColMap is always built from
+      // the same header list _adBuildSummaryOfDealSheet just wrote. If a
+      // caller ever passes a stale/missing map, fail LOUD (not with a silent
+      // #REF!/0): log it once per header so it's easy to spot in testing,
+      // and point at a deliberately-blank far column so COUNT/SUM formulas
+      // still evaluate (to 0) instead of Excel showing #REF!.
+      if(!_adMissingHeaders.has(name)){
+        _adMissingHeaders.add(name);
+        console.warn('[_adBuildReport2Sheet] Header not found in Summary-of-Deal sheet — check for a naming mismatch:', name);
+      }
+      return 'ZZ';
+    }
+    return c;
+  };
+  const rng = (name) => `${SOD}!${col(name)}:${col(name)}`;
   // Same column widths as Report 1 — for layout consistency
+  // Column 9 (I) widened from a 1.6 gutter to a full KPI-card width to host
+  // the "Avg Refund (₹)" KPI card (v72 KPI redesign).
+  // Column widths for the risk-bucket / right-column tables are set below
+  // (columns J-O) — see the block right after this one.
   ws.getColumn(1).width=1.6;  ws.getColumn(2).width=28.3; ws.getColumn(3).width=18.3;
   ws.getColumn(4).width=83.0; ws.getColumn(5).width=19.8; ws.getColumn(6).width=18.3;
-  ws.getColumn(7).width=14.0; ws.getColumn(8).width=18.7; ws.getColumn(9).width=1.6;
-  ws.getColumn(10).width=25.0; ws.getColumn(11).width=49.2; ws.getColumn(12).width=20.0;
-  ws.getColumn(13).width=18.0; ws.getColumn(14).width=1.6;
-  _adFillRange(ws, 'A1:N92', S.bgPage);
+  ws.getColumn(7).width=14.0; ws.getColumn(8).width=18.7; ws.getColumn(9).width=18.7;
+  // Columns J,K (10,11) are now mostly unused gutter above row 44 (Section 6
+  // below still uses them for its wide per-model table, so kept usable-width
+  // rather than a bare 1.6 gutter). Columns L-O (12-15) now host everything
+  // that used to start at J: risk buckets, Payment Verification Status,
+  // Payment Reconciliation Summary, Monthly Performance Trend Tracker, and
+  // Some Other Important Checks — all shifted right so they align under the
+  // AUDIT STATUS box (which starts at L).
+  ws.getColumn(10).width=14.0; ws.getColumn(11).width=14.0; ws.getColumn(12).width=25.0;
+  ws.getColumn(13).width=49.2; ws.getColumn(14).width=20.0; ws.getColumn(15).width=18.0;
+  _adFillRange(ws, 'A1:O92', S.bgPage);
 
   // ── Top banner (rows 1-3) ──
   ws.getRow(1).height=8.1; ws.getRow(2).height=35.1; ws.getRow(3).height=22.05;
@@ -15219,10 +15471,10 @@ function _adBuildReport2Sheet(ws, m, dealSheetName){
   ws.mergeCells('B2:F2');
   ws.getCell('B2').value='DEALERSHIP AUDIT REPORT';
   _adStyle(ws.getCell('B2'), {fill:S.navy, color:'FFFFFF', bold:true, size:22, align:{h:'left', v:'center', indent:1}});
-  _adFillRange(ws, 'G2:H2', S.navy);
-  ws.mergeCells('J2:M2');
-  ws.getCell('J2').value='AUDIT STATUS';
-  _adStyle(ws.getCell('J2'), {fill:S.navy, color:'FFFFFF', bold:true, size:14, align:{h:'center', v:'center'}});
+  _adFillRange(ws, 'G2:J2', S.navy);
+  ws.mergeCells('L2:O2');
+  ws.getCell('L2').value='AUDIT STATUS';
+  _adStyle(ws.getCell('L2'), {fill:S.navy, color:'FFFFFF', bold:true, size:14, align:{h:'center', v:'center'}});
   ws.mergeCells('B3:F3');
   ws.getCell('B3').value=m.dealerName + (m.dealerLocation ? '  |  '+m.dealerLocation : '') + '  |  Payment Reconciliation & Compliance Audit';
   _adStyle(ws.getCell('B3'), {fill:S.navy, color:S.navyLight, bold:true, size:10, align:{h:'left', v:'center', indent:1}});
@@ -15230,98 +15482,105 @@ function _adBuildReport2Sheet(ws, m, dealSheetName){
   _adStyle(ws.getCell('G3'), {fill:S.navy, color:S.navyLight, bold:true, size:10, align:{h:'right', v:'center'}});
   ws.getCell('H3').value=new Date();
   _adStyle(ws.getCell('H3'), {fill:S.navy, color:'FFFFFF', bold:true, size:10, align:{h:'left', v:'center', indent:1}, fmt:'yyyy-mm-dd'});
-  ws.mergeCells('J3:M3');
+  _adFillRange(ws, 'I3:J3', S.navy);
+  ws.mergeCells('L3:O3');
   const statusText = m.exceptionRate >= 0.5 ? '⚠ EXCEPTIONS IDENTIFIED' : m.exceptionRate >= 0.2 ? '⚠ NEEDS REVIEW' : '✅ ACCEPTABLE';
   const statusColor = m.exceptionRate >= 0.5 ? S.orange : m.exceptionRate >= 0.2 ? S.amberText : S.greenText;
-  ws.getCell('J3').value=statusText;
-  _adStyle(ws.getCell('J3'), {fill:S.navy, color:statusColor, bold:true, size:12, align:{h:'center', v:'center'}});
+  ws.getCell('L3').value=statusText;
+  _adStyle(ws.getCell('L3'), {fill:S.navy, color:statusColor, bold:true, size:12, align:{h:'center', v:'center'}});
 
   // ── KPI strip (row 5 labels, row 6 FORMULAS, row 7 sublabels) ──
   // All numbers in row 6 are Excel formulas referencing the deal-summary sheet
   // (named in `sheetName` above) so editing it auto-updates the dashboard.
-  // ₹ Cr conversion = /10000000 ; ₹ L conversion = /100000
+  // ₹ Cr conversion = /10000000 for B/C/D only; the 6 new Variance/Refund/Net
+  // Variance KPIs below show full ₹ amounts with Indian digit grouping (no
+  // Cr/L division), per spec.
 
-  // Match Rate and Exception Rate removed per user request.
-  // KPI strip layout: B=Total Deals, C=Total Deal Value, D=Total Receipts,
-  // E=Net Variance, F=Avg Deal Value, G=Avg Discount-In-Scope, H=Avg Discount-Overall
-  [['B5','TOTAL DEALS AUDITED'],['C5','TOTAL DEAL VALUE'],['D5','TOTAL RECEIPTS'],['E5','NET VARIANCE'],['F5','AVG DEAL VALUE'],['G5','Avg Discount-In-Scope'],['H5','Avg Discount- Overall']].forEach(([c,t]) => {
+  // KPI strip layout (v72): B=Total Deals, C=Total Deal Value, D=Total Receipts
+  // kept as-is. The old NET VARIANCE / AVG DEAL VALUE / Avg Discount-In-Scope /
+  // Avg Discount-Overall / Refund cards (E-I) are REPLACED by 6 new cards:
+  //   E=Variance (₹)      F=Refund (₹)       G=Net Variance (₹)   [totals]
+  //   H=Avg Variance (₹)  I=Avg Refund (₹)   J=Avg Net Variance (₹) [averages]
+  // The risk-bucket group (SHORT/EXCESS/MINOR/MATCHED) shifts one column
+  // right, from J-M to K-N, to make room for the 6th new card at J. Column N
+  // (previously a 1.6-wide unused edge/padding column) is widened to a full
+  // KPI-card width to host it — verified unused anywhere else in this sheet.
+  [['B5','TOTAL DEALS AUDITED'],['C5','TOTAL DEAL VALUE'],['D5','TOTAL RECEIPTS'],
+   ['E5','Variance (₹)'],['F5','Refund (₹)'],['G5','Net Variance (₹)'],
+   ['H5','Avg Variance (₹)'],['I5','Avg Refund (₹)'],['J5','Avg Net Variance (₹)']].forEach(([c,t]) => {
     _adFillRange(ws,c+':'+c,S.bgWhite);
     ws.getCell(c).value=t;
     _adStyle(ws.getCell(c), {fill:S.bgWhite, color:S.textMute, bold:true, size:8, align:{h:'center', v:'center'}});
   });
-  [['J5','SHORT',S.redFill,S.redDark],['K5','EXCESS RECEIVED',S.amberFill,S.amberDark],['L5','MINOR VAR',S.blueFill,S.blueDark],['M5','MATCHED',S.greenFill,S.greenDark]].forEach(([c,t,f,col]) => {
+  [['L5','SHORT',S.redFill,S.redDark],['M5','EXCESS RECEIVED',S.amberFill,S.amberDark],['N5','MINOR VAR',S.blueFill,S.blueDark],['O5','MATCHED',S.greenFill,S.greenDark]].forEach(([c,t,f,clr]) => {
     ws.getCell(c).value=t;
-    _adStyle(ws.getCell(c), {fill:f, color:col, bold:true, size:8, align:{h:'center', v:'center'}});
+    _adStyle(ws.getCell(c), {fill:f, color:clr, bold:true, size:8, align:{h:'center', v:'center'}});
   });
 
-  ws.getCell('B6').value={formula:`COUNTA(${SOD}!A2:A100000)`};
+  ws.getCell('B6').value={formula:`COUNTA(${SOD}!${col('Customer Name')}2:${col('Customer Name')}100000)`};
   _adStyle(ws.getCell('B6'), {fill:S.bgWhite, color:S.navy, bold:true, size:28, align:{h:'center', v:'center'}, fmt:'#,##0'});
-  ws.getCell('C6').value={formula:`SUM(${SOD}!D:D)/10000000`};
+  ws.getCell('C6').value={formula:`SUM(${rng('Actual Deal Value (₹)')})/10000000`};
   _adStyle(ws.getCell('C6'), {fill:S.bgWhite, color:S.navy, bold:true, size:20, align:{h:'center', v:'center'}, fmt:'0.00'});
-  ws.getCell('D6').value={formula:`SUM(${SOD}!E:E)/10000000`};
+  ws.getCell('D6').value={formula:`SUM(${rng('Total Payment Receipts (₹)')})/10000000`};
   _adStyle(ws.getCell('D6'), {fill:S.bgWhite, color:S.navy, bold:true, size:20, align:{h:'center', v:'center'}, fmt:'0.00'});
-  ws.getCell('E6').value={formula:`SUM(${SOD}!F:F)/100000`};
-  // E6 colour is fixed at write time based on the computed metric (Excel itself
-  // can't change cell colour from a formula without conditional formatting).
-  _adStyle(ws.getCell('E6'), {fill:S.bgWhite, color: m.netVariance < 0 ? S.redText : (m.netVariance > 0 ? S.amberText : S.greenText), bold:true, size:20, align:{h:'center', v:'center'}, fmt:'0.00'});
-  // Avg Deal Value moved to F6 (was H6)
-  ws.getCell('F6').value={formula:`IFERROR(C6*100/B6,0)`};
-  _adStyle(ws.getCell('F6'), {fill:S.bgWhite, color:S.navy, bold:true, size:20, align:{h:'center', v:'center'}, fmt:'0.00'});
-  // G6: Avg Discount per car for In-Scope deals only — uses column Y
-  //   (Discount above scheme, shifted from W in v71 due to Refund (₹) and
-  //   Net variance being inserted after Variance). AB = Deal Type (shifted from Z).
-  ws.getCell('G6').value={formula:`IFERROR(SUMIFS(${SOD}!Y:Y,${SOD}!AB:AB,"In-scope")/COUNTIF(${SOD}!AB:AB,"In-scope"),0)`};
-  _adStyle(ws.getCell('G6'), {fill:S.bgWhite, color:S.amberText, bold:true, size:20, align:{h:'center', v:'center'}, fmt:'#,##0'});
-  // H6: Avg Discount per car across ALL deals — uses column Y
-  ws.getCell('H6').value={formula:`IFERROR(SUM(${SOD}!Y:Y)/COUNTA(${SOD}!A2:A100000),0)`};
-  _adStyle(ws.getCell('H6'), {fill:S.bgWhite, color:S.navy, bold:true, size:20, align:{h:'center', v:'center'}, fmt:'#,##0'});
-  // J6..M6: counts of recon-status buckets from helper columns AP/AQ/AR/AS
-  // (shifted +2 in v71 due to Refund (₹) and Net variance being inserted
-  // after Variance).
-  ws.getCell('J6').value={formula:`SUM(${SOD}!AS:AS)`};   // Short Received
-  _adStyle(ws.getCell('J6'), {fill:S.redFill, color:S.redText, bold:true, size:26, align:{h:'center', v:'center'}, fmt:'#,##0'});
-  ws.getCell('K6').value={formula:`SUM(${SOD}!AR:AR)`};   // Excess Received
-  _adStyle(ws.getCell('K6'), {fill:S.amberFill, color:S.amberFlat, bold:true, size:26, align:{h:'center', v:'center'}, fmt:'#,##0'});
-  ws.getCell('L6').value={formula:`SUM(${SOD}!AQ:AQ)`};   // Minor Variance
-  _adStyle(ws.getCell('L6'), {fill:S.blueFill, color:S.blueText, bold:true, size:26, align:{h:'center', v:'center'}, fmt:'#,##0'});
-  ws.getCell('M6').value={formula:`SUM(${SOD}!AP:AP)`};   // Matched
-  _adStyle(ws.getCell('M6'), {fill:S.greenFill, color:S.greenText, bold:true, size:26, align:{h:'center', v:'center'}, fmt:'#,##0'});
 
-  [['B7','Vehicle Transactions',S.bgWhite,S.textFaint],['C7','Sum of Actual Deals (₹ Cr)',S.bgWhite,S.textFaint],['D7','Total Payments Received (₹ Cr)',S.bgWhite,S.textFaint],['E7','Deal vs Receipt Gap (₹ L)',S.bgWhite,S.textFaint],['F7','Per Transaction (₹ L)',S.bgWhite,S.textFaint],['J7','🚩 High',S.redFill,S.redDark],['K7','⚠ Medium Risk',S.amberFill,S.amberDark],['L7','Low Risk',S.blueFill,S.blueDark],['M7','✅ No Risk',S.greenFill,S.greenDark]].forEach(([c,t,f,col]) => {
+  // ── NEW KPI SERIES (v72) — Variance / Refund / Net Variance, totals + averages ──
+  // Columns resolved dynamically by header name ("Variance (₹)", "Refund (₹)")
+  // — no fixed letters. "Applicable Transactions" denominator = B6 (COUNTA of
+  // "Customer Name"), i.e. the exact same valid-deal population already used
+  // everywhere else on this dashboard (Total Deals Audited / Avg Deal Value /
+  // Avg Discount-Overall etc.), so Avg Variance / Avg Refund / Avg Net
+  // Variance are mathematically consistent with one another and with the
+  // rest of the report. Indian digit-grouping format ("₹"#,##,##0) renders
+  // e.g. ₹2,21,000 / ₹13,700 / ₹8,050 / ₹0 — never #REF!/undefined/NaN,
+  // since SUM()/IFERROR() always resolve to a number even on an empty sheet.
+  // Indian digit grouping (2,21,000 not 221,000) requires Excel's en-IN
+  // locale format code — a plain custom code like "₹"#,##,##0 renders as
+  // flat 3-digit Western grouping in real Excel (verified), not lakh/crore
+  // grouping. [$₹-449] is the LCID for India, which Excel's format engine
+  // uses to apply the correct 2-2-3 grouping automatically.
+  const _inrFmt = '[$₹-449]#,##0';
+  // Row 1 — TOTAL VALUES
+  ws.getCell('E6').value={formula:`SUM(${rng('Variance (₹)')})`};
+  _adStyle(ws.getCell('E6'), {fill:S.bgWhite, color:S.navy, bold:true, size:14, align:{h:'center', v:'center'}, fmt:_inrFmt});
+  ws.getCell('F6').value={formula:`SUM(${rng('Refund (₹)')})`};
+  _adStyle(ws.getCell('F6'), {fill:S.bgWhite, color:S.navy, bold:true, size:14, align:{h:'center', v:'center'}, fmt:_inrFmt});
+  // Net Variance = Variance - Refund, computed from the two totals just above
+  ws.getCell('G6').value={formula:`E6-F6`};
+  // Colour is fixed at write time based on the computed metric (Excel itself
+  // can't change cell colour from a formula without conditional formatting).
+  // m.netVariance (= total receipts - total deal value) shares the same sign
+  // as the Variance total in the overwhelming majority of cases, so it's used
+  // here as the risk-colour signal, same convention as the rest of this sheet.
+  _adStyle(ws.getCell('G6'), {fill:S.bgWhite, color: m.netVariance < 0 ? S.redText : (m.netVariance > 0 ? S.amberText : S.greenText), bold:true, size:14, align:{h:'center', v:'center'}, fmt:_inrFmt});
+  // Row 2 — AVERAGE VALUES (same denominator B6 as every other avg KPI here)
+  ws.getCell('H6').value={formula:`IFERROR(E6/B6,0)`};
+  _adStyle(ws.getCell('H6'), {fill:S.bgWhite, color:S.navy, bold:true, size:14, align:{h:'center', v:'center'}, fmt:_inrFmt});
+  ws.getCell('I6').value={formula:`IFERROR(F6/B6,0)`};
+  _adStyle(ws.getCell('I6'), {fill:S.bgWhite, color:S.navy, bold:true, size:14, align:{h:'center', v:'center'}, fmt:_inrFmt});
+  ws.getCell('J6').value={formula:`IFERROR(G6/B6,0)`};
+  _adStyle(ws.getCell('J6'), {fill:S.bgWhite, color: m.netVariance < 0 ? S.redText : (m.netVariance > 0 ? S.amberText : S.greenText), bold:true, size:14, align:{h:'center', v:'center'}, fmt:_inrFmt});
+
+  // L6..O6: counts of recon-status buckets (shifted from K-N to L-O to
+  // align under the AUDIT STATUS box, which now starts at L). Resolved
+  // dynamically by header name ("Is Short"/"Is Excess"/"Is Minor"/"Is Matched")
+  // — no fixed letters.
+  ws.getCell('L6').value={formula:`SUM(${rng('Is Short')})`};     // Short Received
+  _adStyle(ws.getCell('L6'), {fill:S.redFill, color:S.redText, bold:true, size:26, align:{h:'center', v:'center'}, fmt:'#,##0'});
+  ws.getCell('M6').value={formula:`SUM(${rng('Is Excess')})`};    // Excess Received
+  _adStyle(ws.getCell('M6'), {fill:S.amberFill, color:S.amberFlat, bold:true, size:26, align:{h:'center', v:'center'}, fmt:'#,##0'});
+  ws.getCell('N6').value={formula:`SUM(${rng('Is Minor')})`};     // Minor Variance
+  _adStyle(ws.getCell('N6'), {fill:S.blueFill, color:S.blueText, bold:true, size:26, align:{h:'center', v:'center'}, fmt:'#,##0'});
+  ws.getCell('O6').value={formula:`SUM(${rng('Is Matched')})`};   // Matched
+  _adStyle(ws.getCell('O6'), {fill:S.greenFill, color:S.greenText, bold:true, size:26, align:{h:'center', v:'center'}, fmt:'#,##0'});
+
+  [['B7','Vehicle Transactions',S.bgWhite,S.textFaint],['C7','Sum of Actual Deals (₹ Cr)',S.bgWhite,S.textFaint],['D7','Total Payments Received (₹ Cr)',S.bgWhite,S.textFaint],
+   ['E7','Total Variance',S.bgWhite,S.textFaint],['F7','Total Refund',S.bgWhite,S.textFaint],['G7','Variance − Refund',S.bgWhite,S.textFaint],
+   ['H7','Per Transaction',S.bgWhite,S.textFaint],['I7','Per Transaction',S.bgWhite,S.textFaint],['J7','Per Transaction',S.bgWhite,S.textFaint],
+   ['L7','🚩 High',S.redFill,S.redDark],['M7','⚠ Medium Risk',S.amberFill,S.amberDark],['N7','Low Risk',S.blueFill,S.blueDark],['O7','✅ No Risk',S.greenFill,S.greenDark]].forEach(([c,t,f,clr]) => {
     ws.getCell(c).value=t;
-    _adStyle(ws.getCell(c), {fill:f, color:col, size:8, align:{h:'center', v:'center'}});
+    _adStyle(ws.getCell(c), {fill:f, color:clr, size:8, align:{h:'center', v:'center'}});
   });
-  // G7/H7 sublabels are FORMULAS that build a "<Mon1>- xxx , <Mon2>- yyy"
-  // string dynamically from the deal sheet. The months shown are the LAST
-  // TWO months actually present in the data (per m.lastTwoMonths), so we
-  // never hardcode Mar/Apr. Handles three cases:
-  //   - 0 months: cell stays blank
-  //   - 1 month:  "<Mon>- xxx"
-  //   - 2 months: "<Mon1>- xxx , <Mon2>- yyy"
-  // Y = Discount above scheme (shifted from W in v71 due to Refund (₹) /
-  // Net variance insert); AB = Deal Type (was Z); AI = Month helper (was AG).
-  const _ltm = m.lastTwoMonths || [];
-  // Build a SUMIFS/COUNTIFS pair for a given month number + optional scope filter
-  const _avgInScopeFor = (mo) => `IFERROR(SUMIFS(${SOD}!Y:Y,${SOD}!AB:AB,"In-scope",${SOD}!AI:AI,${mo})/COUNTIFS(${SOD}!AB:AB,"In-scope",${SOD}!AI:AI,${mo}),0)`;
-  const _avgOverallFor = (mo) => `IFERROR(SUMIFS(${SOD}!Y:Y,${SOD}!AI:AI,${mo})/COUNTIF(${SOD}!AI:AI,${mo}),0)`;
-  // G7: In-Scope monthly sublabel
-  let g7Formula = '""';
-  if(_ltm.length === 1){
-    g7Formula = `"${_ltm[0].name}- "&ROUND(${_avgInScopeFor(_ltm[0].num)},0)`;
-  } else if(_ltm.length === 2){
-    g7Formula = `"${_ltm[0].name}- "&ROUND(${_avgInScopeFor(_ltm[0].num)},0)&" , ${_ltm[1].name}- "&ROUND(${_avgInScopeFor(_ltm[1].num)},0)`;
-  }
-  ws.getCell('G7').value = {formula: g7Formula};
-  _adStyle(ws.getCell('G7'), {fill:S.bgWhite, color:S.textFaint, size:8, align:{h:'center', v:'center'}});
-  // H7: Overall monthly sublabel
-  let h7Formula = '""';
-  if(_ltm.length === 1){
-    h7Formula = `"${_ltm[0].name}- "&ROUND(${_avgOverallFor(_ltm[0].num)},0)`;
-  } else if(_ltm.length === 2){
-    h7Formula = `"${_ltm[0].name}- "&ROUND(${_avgOverallFor(_ltm[0].num)},0)&" , ${_ltm[1].name}- "&ROUND(${_avgOverallFor(_ltm[1].num)},0)`;
-  }
-  ws.getCell('H7').value = {formula: h7Formula};
-  _adStyle(ws.getCell('H7'), {fill:S.bgWhite, color:S.textFaint, size:8, align:{h:'center', v:'center'}});
 
   // ── Section 2: Deal Classification (left) + Payment Verification (right) ──
   ws.getRow(9).height = 24;
@@ -15342,16 +15601,16 @@ function _adBuildReport2Sheet(ws, m, dealSheetName){
   //   Row 10         → headers: J=Source, K=Count, L:M merged="Amount (₹)"
   //   Rows 11-15     → 5 remark rows
   //   Row 16         → TOTAL (navy footer)
-  ws.mergeCells('J9:M9');
-  ws.getCell('J9').value = 'PAYMENT VERIFICATION STATUS';
-  _adStyle(ws.getCell('J9'), {fill:S.greyHeader, color:S.navy, bold:true, size:12, align:{h:'center', v:'center'}});
-  ws.getCell(10, 10).value = 'Verification Source';
-  _adStyle(ws.getCell(10, 10), {fill:S.greyHead, color:'FFFFFF', bold:true, size:9, align:{h:'left', v:'center', indent:1}});
-  ws.getCell(10, 11).value = 'Count';
-  _adStyle(ws.getCell(10, 11), {fill:S.greyHead, color:'FFFFFF', bold:true, size:9, align:{h:'right', v:'center', indent:1}});
-  ws.mergeCells('L10:M10');
-  ws.getCell(10, 12).value = 'Amount (₹)';
-  _adStyle(ws.getCell(10, 12), {fill:S.greyHead, color:'FFFFFF', bold:true, size:9, align:{h:'right', v:'center', indent:1}});
+  ws.mergeCells('L9:O9');
+  ws.getCell('L9').value = 'PAYMENT VERIFICATION STATUS';
+  _adStyle(ws.getCell('L9'), {fill:S.greyHeader, color:S.navy, bold:true, size:12, align:{h:'center', v:'center'}});
+  ws.getCell(10, 12).value = 'Verification Source';
+  _adStyle(ws.getCell(10, 12), {fill:S.greyHead, color:'FFFFFF', bold:true, size:9, align:{h:'left', v:'center', indent:1}});
+  ws.getCell(10, 13).value = 'Count';
+  _adStyle(ws.getCell(10, 13), {fill:S.greyHead, color:'FFFFFF', bold:true, size:9, align:{h:'right', v:'center', indent:1}});
+  ws.mergeCells('N10:O10');
+  ws.getCell(10, 14).value = 'Amount (₹)';
+  _adStyle(ws.getCell(10, 14), {fill:S.greyHead, color:'FFFFFF', bold:true, size:9, align:{h:'right', v:'center', indent:1}});
 
   // All 5 possible remarks — these match the dropdown options in the
   // Summary of Deal sheet. Both the system-generated values (written at
@@ -15397,26 +15656,26 @@ function _adBuildReport2Sheet(ws, m, dealSheetName){
     const color = _adRemarkColor(rk);
     const escRk = rk.replace(/"/g,'""');
     // Source label
-    ws.getCell(rowNum, 10).value = rk;
-    _adStyle(ws.getCell(rowNum, 10), {fill:fill, color:color, size:9, align:{h:'left', v:'center', indent:1, wrap:true}});
+    ws.getCell(rowNum, 12).value = rk;
+    _adStyle(ws.getCell(rowNum, 12), {fill:fill, color:color, size:9, align:{h:'left', v:'center', indent:1, wrap:true}});
     // Count
-    ws.getCell(rowNum, 11).value = {formula:`COUNTIF(${SOD}!L:L,"${escRk}")`};
-    _adStyle(ws.getCell(rowNum, 11), {fill:zebra, color:S.textDark, bold:true, size:10, align:{h:'right', v:'center', indent:1}, fmt:'#,##0'});
-    // Amount (L:M merged)
-    ws.mergeCells(rowNum, 12, rowNum, 13);
-    ws.getCell(rowNum, 12).value = {formula:`SUMIF(${SOD}!L:L,"${escRk}",${SOD}!E:E)`};
-    _adStyle(ws.getCell(rowNum, 12), {fill:zebra, color:S.textDark, bold:true, size:10, align:{h:'right', v:'center', indent:1}, fmt:'#,##0'});
+    ws.getCell(rowNum, 13).value = {formula:`COUNTIF(${rng('Remarks')},"${escRk}")`};
+    _adStyle(ws.getCell(rowNum, 13), {fill:zebra, color:S.textDark, bold:true, size:10, align:{h:'right', v:'center', indent:1}, fmt:'#,##0'});
+    // Amount (N:O merged)
+    ws.mergeCells(rowNum, 14, rowNum, 15);
+    ws.getCell(rowNum, 14).value = {formula:`SUMIF(${rng('Remarks')},"${escRk}",${rng('Total Payment Receipts (₹)')})`};
+    _adStyle(ws.getCell(rowNum, 14), {fill:zebra, color:S.textDark, bold:true, size:10, align:{h:'right', v:'center', indent:1}, fmt:'#,##0'});
     ws.getRow(rowNum).height = 19;
   });
   // TOTAL row at row 16 (start row 11 + 5 = 16)
   const _adVerTotalRow = _adVerStartRow + _adAllRemarks.length;   // 16
-  ws.getCell(_adVerTotalRow, 10).value = 'TOTAL';
-  _adStyle(ws.getCell(_adVerTotalRow, 10), {fill:S.navy, color:'FFFFFF', bold:true, size:10, align:{h:'left', v:'center', indent:1}});
-  ws.getCell(_adVerTotalRow, 11).value = {formula:`SUM(K${_adVerStartRow}:K${_adVerTotalRow-1})`};
-  _adStyle(ws.getCell(_adVerTotalRow, 11), {fill:S.navy, color:'FFFFFF', bold:true, size:10, align:{h:'right', v:'center', indent:1}, fmt:'#,##0'});
-  ws.mergeCells(_adVerTotalRow, 12, _adVerTotalRow, 13);
-  ws.getCell(_adVerTotalRow, 12).value = {formula:`SUM(L${_adVerStartRow}:L${_adVerTotalRow-1})`};
-  _adStyle(ws.getCell(_adVerTotalRow, 12), {fill:S.navy, color:'FFFFFF', bold:true, size:10, align:{h:'right', v:'center', indent:1}, fmt:'#,##0'});
+  ws.getCell(_adVerTotalRow, 12).value = 'TOTAL';
+  _adStyle(ws.getCell(_adVerTotalRow, 12), {fill:S.navy, color:'FFFFFF', bold:true, size:10, align:{h:'left', v:'center', indent:1}});
+  ws.getCell(_adVerTotalRow, 13).value = {formula:`SUM(M${_adVerStartRow}:M${_adVerTotalRow-1})`};
+  _adStyle(ws.getCell(_adVerTotalRow, 13), {fill:S.navy, color:'FFFFFF', bold:true, size:10, align:{h:'right', v:'center', indent:1}, fmt:'#,##0'});
+  ws.mergeCells(_adVerTotalRow, 14, _adVerTotalRow, 15);
+  ws.getCell(_adVerTotalRow, 14).value = {formula:`SUM(N${_adVerStartRow}:N${_adVerTotalRow-1})`};
+  _adStyle(ws.getCell(_adVerTotalRow, 14), {fill:S.navy, color:'FFFFFF', bold:true, size:10, align:{h:'right', v:'center', indent:1}, fmt:'#,##0'});
   ws.getRow(_adVerTotalRow).height = 21.75;
 
   // ── Deal Classification (left side) — unchanged ──
@@ -15431,43 +15690,43 @@ function _adBuildReport2Sheet(ws, m, dealSheetName){
   ];
   dealCats.forEach((cat, i) => {
     const rowNum = cat.row, zebra = i%2===1 ? S.bgZebra : S.bgWhite;
-    [2,3,4,5].forEach(col => { ws.getCell(rowNum, col).fill = {type:'pattern', pattern:'solid', fgColor:{argb: _adARGB(zebra)}}; });
+    [2,3,4,5].forEach(cc => { ws.getCell(rowNum, cc).fill = {type:'pattern', pattern:'solid', fgColor:{argb: _adARGB(zebra)}}; });
     // Label
     ws.getCell(rowNum, 2).value = cat.label;
     _adStyle(ws.getCell(rowNum,2), {fill:zebra, color:S.textDark, size:10, align:{h:'left', v:'center', indent:1}});
-    // Count = COUNTIF on Deal Type column (AB, shifted from Z in v71)
-    ws.getCell(rowNum, 3).value = {formula:`COUNTIF(${SOD}!AB:AB,"${cat.dealType}")`};
+    // Count = COUNTIF on "Deal Type" column, resolved dynamically by header name
+    ws.getCell(rowNum, 3).value = {formula:`COUNTIF(${rng('Deal Type')},"${cat.dealType}")`};
     _adStyle(ws.getCell(rowNum,3), {fill:zebra, color:S.textDark, bold:true, size:10, align:{h:'right', v:'center', indent:1}, fmt:'#,##0'});
     // % of Total = count / B15 (Total Vehicles, populated below)
     ws.getCell(rowNum, 4).value = {formula:`IFERROR(C${rowNum}/$C$15,0)`};
     _adStyle(ws.getCell(rowNum,4), {fill:zebra, color:S.textDark, size:10, align:{h:'right', v:'center', indent:1}, fmt:'0.00%'});
-    // Avg Deal Value — In-Scope uses helper AJ (In-Scope Deal Value; shifted
-    // from AH in v71 due to Refund (₹) / Net variance insert);
-    // others use SUMIFS on D filtered by Deal Type column AB
+    // Avg Deal Value — In-Scope uses the "In-Scope Deal Value" helper column;
+    // others use SUMIFS on "Actual Deal Value (₹)" filtered by "Deal Type".
+    // Both resolved dynamically by header name.
     if(cat.useHelperAC){
-      ws.getCell(rowNum, 5).value = {formula:`IFERROR(SUM(${SOD}!AJ:AJ)/C${rowNum},0)`};
+      ws.getCell(rowNum, 5).value = {formula:`IFERROR(SUM(${rng('In-Scope Deal Value')})/C${rowNum},0)`};
     } else {
-      ws.getCell(rowNum, 5).value = {formula:`IFERROR(SUMIFS(${SOD}!D:D,${SOD}!AB:AB,"${cat.dealType}")/C${rowNum},0)`};
+      ws.getCell(rowNum, 5).value = {formula:`IFERROR(SUMIFS(${rng('Actual Deal Value (₹)')},${rng('Deal Type')},"${cat.dealType}")/C${rowNum},0)`};
     }
     _adStyle(ws.getCell(rowNum,5), {fill:zebra, color:S.textDark, size:10, align:{h:'right', v:'center', indent:1}, fmt:'#,##0'});
   });
   // Row 15 — Total Vehicles Delivered (navy band)
   ws.getCell('B15').value='Total Vehicles Delivered';
-  ws.getCell('C15').value={formula:`COUNTA(${SOD}!A2:A100000)`};
+  ws.getCell('C15').value={formula:`COUNTA(${SOD}!${col('Customer Name')}2:${col('Customer Name')}100000)`};
   ws.getCell('D15').value=1;
-  ws.getCell('E15').value={formula:`IFERROR(SUM(${SOD}!D:D)/C15,0)`};
+  ws.getCell('E15').value={formula:`IFERROR(SUM(${rng('Actual Deal Value (₹)')})/C15,0)`};
   [2,3,4,5].forEach(c => _adStyle(ws.getCell(15, c), {fill:S.navy, color:'FFFFFF', bold:true, size:10, align:{h: c===2?'left':'right', v:'center', indent:1}, fmt: c===4 ? '0.00%' : (c===3 || c===5 ? '#,##0' : undefined)}));
 
   // ── Section 3: Product Penetration (uses "Finance (In-house)" label) ──
   ws.getRow(16).height = 24;
   ws.mergeCells('B16:E16'); ws.getCell('B16').value='PRODUCT PENETRATION ANALYSIS';
   _adStyle(ws.getCell('B16'), {fill:S.greyHeader, color:S.navy, bold:true, size:12, align:{h:'center', v:'center'}});
-  ws.mergeCells('J17:M17'); ws.getCell('J17').value='PAYMENT RECONCILIATION SUMMARY';
-  _adStyle(ws.getCell('J17'), {fill:S.greyHeader, color:S.navy, bold:true, size:12, align:{h:'center', v:'center'}});
+  ws.mergeCells('L17:O17'); ws.getCell('L17').value='PAYMENT RECONCILIATION SUMMARY';
+  _adStyle(ws.getCell('L17'), {fill:S.greyHeader, color:S.navy, bold:true, size:12, align:{h:'center', v:'center'}});
   // Header row (Risk Flag column removed per user request — keep Penetration %)
   ['Product','Cases','Penetration %','Market Avg Penetration %'].forEach((t,i) => { const c=ws.getCell(17, 2+i); c.value=t; _adStyle(c, {fill:S.greyHead, color:'FFFFFF', bold:true, size:9, align:{h:'left', v:'center', indent:1, wrap:true}}); });
   ws.getColumn(5).width = Math.max(ws.getColumn(5).width||10, 16);
-  ['Remark Category','','Count','Total Variance (₹)'].forEach((t,i) => { const c=ws.getCell(18, 10+i); c.value=t; _adStyle(c, {fill:S.greyHead, color:'FFFFFF', bold:true, size:9, align:{h:'left', v:'center', indent:1}}); });
+  ['Remark Category','','Count','Total Variance (₹)'].forEach((t,i) => { const c=ws.getCell(18, 12+i); c.value=t; _adStyle(c, {fill:S.greyHead, color:'FFFFFF', bold:true, size:9, align:{h:'left', v:'center', indent:1}}); });
 
   // ── Market-average penetration (average across ALL dealerships) ──
   // For each product we compute every dealership's own penetration rate
@@ -15509,25 +15768,23 @@ function _adBuildReport2Sheet(ws, m, dealSheetName){
     return out;
   })();
 
-  // Penetration: helper column letters shifted +2 in v71 due to Refund (₹)
-  // and Net variance being inserted after Variance.
-  // Mapping (v70 → v71):
-  //   Is Insurance:  AI → AK    Is Finance: AJ → AL    Is Accessories: AK → AM
-  //   Is RSA:        AL → AN    Is EW:      AM → AO
-  [['Insurance',                   'AK', m.insCount, _mktAvg.INS],
-   ['Accessories Sold',            'AM', m.accCount, _mktAvg.ACC],
-   ['Finance (In-house)',          'AL', m.finCount, _mktAvg.FIN],
-   ['RSA (Road Side Assistance)',  'AN', m.rsaCount, _mktAvg.RSA],
-   ['Extended Warranty (EW)',      'AO', m.ewCount, _mktAvg.EW]].forEach((row, i) => {
+  // Penetration: helper columns resolved dynamically by header name
+  // ("Is Insurance"/"Is Finance In-house"/"Is Accessories"/"Is RSA"/"Is EW")
+  // — no fixed letters, immune to future column reorders.
+  [['Insurance',                   'Is Insurance',         m.insCount, _mktAvg.INS],
+   ['Accessories Sold',            'Is Accessories',       m.accCount, _mktAvg.ACC],
+   ['Finance (In-house)',          'Is Finance In-house',  m.finCount, _mktAvg.FIN],
+   ['RSA (Road Side Assistance)',  'Is RSA',                m.rsaCount, _mktAvg.RSA],
+   ['Extended Warranty (EW)',      'Is EW',                 m.ewCount, _mktAvg.EW]].forEach((row, i) => {
     const rowNum = 18+i, zebra = i%2===1 ? S.bgZebra : S.bgWhite;
-    const helperCol = row[1];                          // helper column letter in SOD
+    const helperHeader = row[1];                        // helper column header name in SOD
     const pct = m.total ? row[2]/m.total : 0;          // for Penetration % colour at write time
     const mkt = row[3] || 0;                           // market avg penetration (0..1)
-    [2,3,4,5].forEach(col => { ws.getCell(rowNum, col).fill = {type:'pattern', pattern:'solid', fgColor:{argb: _adARGB(zebra)}}; });
+    [2,3,4,5].forEach(cc => { ws.getCell(rowNum, cc).fill = {type:'pattern', pattern:'solid', fgColor:{argb: _adARGB(zebra)}}; });
     ws.getCell(rowNum, 2).value = row[0];
     _adStyle(ws.getCell(rowNum,2), {fill:zebra, color:S.textDark, size:10, align:{h:'left', v:'center', indent:1}});
     // Cases = SUM of helper column (each cell is 1 or 0)
-    ws.getCell(rowNum, 3).value = {formula:`SUM(${SOD}!${helperCol}:${helperCol})`};
+    ws.getCell(rowNum, 3).value = {formula:`SUM(${rng(helperHeader)})`};
     _adStyle(ws.getCell(rowNum,3), {fill:zebra, color:S.textDark, bold:true, size:10, align:{h:'right', v:'center', indent:1}, fmt:'#,##0'});
     // Penetration % = cases / Total Vehicles (B15 / C15)
     ws.getCell(rowNum, 4).value = {formula:`IFERROR(C${rowNum}/$C$15,0)`};
@@ -15539,31 +15796,30 @@ function _adBuildReport2Sheet(ws, m, dealSheetName){
   });
 
   // Payment reconciliation summary right side — formulas
-  // Recon-status helper columns (see _adBuildSummaryOfDealSheet layout):
-  //   AP (42) = Is Matched, AQ (43) = Is Minor, AR (44) = Is Excess, AS (45) = Is Short.
-  // (Shifted +2 in v71 due to Refund (₹) / Net variance insert. Reconciliation
-  //  Status itself also moved from G to I.)
-  [['Matched (Zero Variance)',     'AP', 'Matched',         S.greenText],
-   ['Upto ₹1,000 Variance',        'AQ', 'Minor Variance',  S.blueText],
-   ['Excess Received (>₹1,000)',   'AR', 'Excess Received', S.amberText],
-   ['Short Received (Underpaid)',  'AS', 'Short Received',  S.redText]].forEach((row, i) => {
+  // Columns resolved dynamically by header name ("Is Matched"/"Is Minor"/
+  // "Is Excess"/"Is Short" for counts; "Variance (₹)"/"Reconciliation Status"
+  // for the variance total) — no fixed letters, immune to future reorders.
+  [['Matched (Zero Variance)',     'Is Matched', 'Matched',         S.greenText],
+   ['Upto ₹1,000 Variance',        'Is Minor',   'Minor Variance',  S.blueText],
+   ['Excess Received (>₹1,000)',   'Is Excess',  'Excess Received', S.amberText],
+   ['Short Received (Underpaid)',  'Is Short',   'Short Received',  S.redText]].forEach((row, i) => {
     const rowNum = 19+i, zebra = i%2===1 ? S.bgZebra : S.bgWhite;
-    [10,11,12,13].forEach(col => { ws.getCell(rowNum, col).fill = {type:'pattern', pattern:'solid', fgColor:{argb: _adARGB(zebra)}}; });
-    ws.mergeCells(rowNum, 10, rowNum, 11);
-    ws.getCell(rowNum, 10).value = row[0];
-    _adStyle(ws.getCell(rowNum,10), {fill:zebra, color:row[3], size:10, align:{h:'left', v:'center', indent:1}});
+    [12,13,14,15].forEach(cc => { ws.getCell(rowNum, cc).fill = {type:'pattern', pattern:'solid', fgColor:{argb: _adARGB(zebra)}}; });
+    ws.mergeCells(rowNum, 12, rowNum, 13);
+    ws.getCell(rowNum, 12).value = row[0];
+    _adStyle(ws.getCell(rowNum,12), {fill:zebra, color:row[3], size:10, align:{h:'left', v:'center', indent:1}});
     // Count = SUM of helper column for that recon bucket
-    ws.getCell(rowNum, 12).value = {formula:`SUM(${SOD}!${row[1]}:${row[1]})`};
-    _adStyle(ws.getCell(rowNum,12), {fill:zebra, color:row[3], bold:true, size:10, align:{h:'right', v:'center', indent:1}, fmt:'#,##0'});
-    // Total Variance = SUMIFS on F (variance col) where I (Reconciliation Status, shifted from G) = bucket name
-    ws.getCell(rowNum, 13).value = {formula:`IFERROR(SUMIFS(${SOD}!F:F,${SOD}!I:I,"${row[2]}"),0)`};
-    _adStyle(ws.getCell(rowNum,13), {fill:zebra, color:row[3], bold:true, size:10, align:{h:'right', v:'center', indent:1}, fmt:'#,##0'});
+    ws.getCell(rowNum, 14).value = {formula:`SUM(${rng(row[1])})`};
+    _adStyle(ws.getCell(rowNum,14), {fill:zebra, color:row[3], bold:true, size:10, align:{h:'right', v:'center', indent:1}, fmt:'#,##0'});
+    // Total Variance = SUMIFS on Variance (₹) where Reconciliation Status = bucket name
+    ws.getCell(rowNum, 15).value = {formula:`IFERROR(SUMIFS(${rng('Variance (₹)')},${rng('Reconciliation Status')},"${row[2]}"),0)`};
+    _adStyle(ws.getCell(rowNum,15), {fill:zebra, color:row[3], bold:true, size:10, align:{h:'right', v:'center', indent:1}, fmt:'#,##0'});
   });
-  ws.mergeCells('J23:K23');
-  ws.getCell('J23').value='Grand Total';
-  ws.getCell('L23').value={formula:`SUM(L19:L22)`};
-  ws.getCell('M23').value={formula:`SUM(${SOD}!F:F)`};
-  [10,12,13].forEach(c => _adStyle(ws.getCell(23, c), {fill:S.navy, color:'FFFFFF', bold:true, size:10, align:{h: c===10?'left':'right', v:'center', indent:1}, fmt: c===12 ? '#,##0' : (c===13 ? '#,##0' : undefined)}));
+  ws.mergeCells('L23:M23');
+  ws.getCell('L23').value='Grand Total';
+  ws.getCell('N23').value={formula:`SUM(N19:N22)`};
+  ws.getCell('O23').value={formula:`SUM(${rng('Variance (₹)')})`};
+  [12,14,15].forEach(c => _adStyle(ws.getCell(23, c), {fill:S.navy, color:'FFFFFF', bold:true, size:10, align:{h: c===12?'left':'right', v:'center', indent:1}, fmt: c===14 ? '#,##0' : (c===15 ? '#,##0' : undefined)}));
 
   // ── Section 4: Model-wise Accessories + Monthly Performance Trend ──
   // Layout reworked to match the requested sample:
@@ -15575,8 +15831,8 @@ function _adBuildReport2Sheet(ws, m, dealSheetName){
   ws.getRow(24).height = 24;
   ws.mergeCells('B24:H24'); ws.getCell('B24').value='MODEL-WISE ACCESSORIES REVENUE ANALYSIS';
   _adStyle(ws.getCell('B24'), {fill:S.greyHeader, color:S.navy, bold:true, size:12, align:{h:'center', v:'center'}});
-  ws.mergeCells('J24:M24'); ws.getCell('J24').value='MONTHLY PERFORMANCE TREND TRACKER';
-  _adStyle(ws.getCell('J24'), {fill:S.greyHeader, color:S.navy, bold:true, size:12, align:{h:'center', v:'center'}});
+  ws.mergeCells('L24:O24'); ws.getCell('L24').value='MONTHLY PERFORMANCE TREND TRACKER';
+  _adStyle(ws.getCell('L24'), {fill:S.greyHeader, color:S.navy, bold:true, size:12, align:{h:'center', v:'center'}});
   ['Model','Deals','Accessories Sold','Penetration %','Accessories Revenue (₹)','Avg / Car (₹)','% Share'].forEach((t,i) => {
     const c=ws.getCell(25, 2+i); c.value=t;
     _adStyle(c, {fill:S.greyHead, color:'FFFFFF', bold:true, size:9, align:{h: i===0?'left':'center', v:'center', indent: i===0?1:0, wrap:true}});
@@ -15588,7 +15844,7 @@ function _adBuildReport2Sheet(ws, m, dealSheetName){
   const _mptLtm = m.lastTwoMonths || [];
   const _mptHdr1 = _mptLtm.length >= 1 ? _mptLtm[0].name : '—';
   const _mptHdr2 = _mptLtm.length >= 2 ? _mptLtm[1].name : '—';
-  ['KPI','', _mptHdr1, _mptHdr2].forEach((t,i) => { const c=ws.getCell(25, 10+i); c.value=t; _adStyle(c, {fill:S.greyHead, color:'FFFFFF', bold:true, size:9, align:{h:'left', v:'center', indent:1}}); });
+  ['KPI','', _mptHdr1, _mptHdr2].forEach((t,i) => { const c=ws.getCell(25, 12+i); c.value=t; _adStyle(c, {fill:S.greyHead, color:'FFFFFF', bold:true, size:9, align:{h:'left', v:'center', indent:1}}); });
 
   // Build the model rows. Show up to 9 models inline; if more, collapse the
   // remainder into a single "Other Models (n)" row so the table stays within
@@ -15601,47 +15857,47 @@ function _adBuildReport2Sheet(ws, m, dealSheetName){
   _inlineModels.forEach(([model, info], i) => {
     const rowNum = _accRow, zebra = i%2===1 ? S.bgZebra : S.bgWhite;
     const escModel = model.replace(/"/g,'""');
-    for(let col=2; col<=8; col++){ ws.getCell(rowNum, col).fill = {type:'pattern', pattern:'solid', fgColor:{argb: _adARGB(zebra)}}; }
+    for(let cc=2; cc<=8; cc++){ ws.getCell(rowNum, cc).fill = {type:'pattern', pattern:'solid', fgColor:{argb: _adARGB(zebra)}}; }
     ws.getCell(rowNum, 2).value = model;
     _adStyle(ws.getCell(rowNum,2), {fill:zebra, color:S.textDark, size:10, align:{h:'left', v:'center', indent:1}});
     // C Deals = count of all this model's rows
-    ws.getCell(rowNum, 3).value = {formula:`COUNTIFS(${SOD}!B:B,"${escModel}")`};
+    ws.getCell(rowNum, 3).value = {formula:`COUNTIFS(${rng('Model')},"${escModel}")`};
     _adStyle(ws.getCell(rowNum,3), {fill:zebra, color:S.textDark, size:10, align:{h:'center', v:'center'}, fmt:'#,##0'});
     // D Accessories Sold = count of this model's rows with Accessories > 0
-    ws.getCell(rowNum, 4).value = {formula:`COUNTIFS(${SOD}!B:B,"${escModel}",${SOD}!N:N,">0")`};
+    ws.getCell(rowNum, 4).value = {formula:`COUNTIFS(${rng('Model')},"${escModel}",${rng('Accessories (₹)')},">0")`};
     _adStyle(ws.getCell(rowNum,4), {fill:zebra, color:S.textDark, size:10, align:{h:'center', v:'center'}, fmt:'#,##0'});
     // E Penetration % = Sold / Deals
     ws.getCell(rowNum, 5).value = {formula:`IFERROR(D${rowNum}/C${rowNum},0)`};
     _adStyle(ws.getCell(rowNum,5), {fill:zebra, color:S.blueText, bold:true, size:10, align:{h:'center', v:'center'}, fmt:'0.0%'});
-    // F Accessories Revenue = SUMIFS(N, B=model)
-    ws.getCell(rowNum, 6).value = {formula:`SUMIFS(${SOD}!N:N,${SOD}!B:B,"${escModel}")`};
+    // F Accessories Revenue = SUMIFS(Accessories (₹), Model=model)
+    ws.getCell(rowNum, 6).value = {formula:`SUMIFS(${rng('Accessories (₹)')},${rng('Model')},"${escModel}")`};
     _adStyle(ws.getCell(rowNum,6), {fill:zebra, color:S.textDark, bold:true, size:10, align:{h:'right', v:'center', indent:1}, fmt:'₹#,##0'});
     // G Avg / Car = Revenue / Accessories Sold
     ws.getCell(rowNum, 7).value = {formula:`IFERROR(F${rowNum}/D${rowNum},0)`};
     _adStyle(ws.getCell(rowNum,7), {fill:zebra, color:S.textDark, size:10, align:{h:'right', v:'center', indent:1}, fmt:'₹#,##0'});
     // H % Share = Revenue / total accessories revenue
-    ws.getCell(rowNum, 8).value = {formula:`IFERROR(F${rowNum}/SUM(${SOD}!N:N),0)`};
+    ws.getCell(rowNum, 8).value = {formula:`IFERROR(F${rowNum}/SUM(${rng('Accessories (₹)')}),0)`};
     _adStyle(ws.getCell(rowNum,8), {fill:zebra, color:S.textDark, size:10, align:{h:'center', v:'center'}, fmt:'0.0%'});
     _accRow++;
   });
   if(_restModels.length > 0){
     const rowNum = _accRow, zebra = (_inlineModels.length)%2===1 ? S.bgZebra : S.bgWhite;
     const firstRev = 26, lastRev = 26 + _inlineModels.length - 1;
-    for(let col=2; col<=8; col++){ ws.getCell(rowNum, col).fill = {type:'pattern', pattern:'solid', fgColor:{argb: _adARGB(zebra)}}; }
+    for(let cc=2; cc<=8; cc++){ ws.getCell(rowNum, cc).fill = {type:'pattern', pattern:'solid', fgColor:{argb: _adARGB(zebra)}}; }
     ws.getCell(rowNum, 2).value = 'Other Models ('+_restModels.length+')';
     _adStyle(ws.getCell(rowNum,2), {fill:zebra, color:S.textMute, size:10, align:{h:'left', v:'center', indent:1}});
     // Deals / Sold for the remainder = grand total minus inline rows
-    ws.getCell(rowNum, 3).value = {formula:`COUNTA(${SOD}!B2:B100000)-SUM(C${firstRev}:C${lastRev})`};
+    ws.getCell(rowNum, 3).value = {formula:`COUNTA(${SOD}!${col('Model')}2:${col('Model')}100000)-SUM(C${firstRev}:C${lastRev})`};
     _adStyle(ws.getCell(rowNum,3), {fill:zebra, color:S.textMute, size:10, align:{h:'center', v:'center'}, fmt:'#,##0'});
-    ws.getCell(rowNum, 4).value = {formula:`COUNTIF(${SOD}!N2:N100000,">0")-SUM(D${firstRev}:D${lastRev})`};
+    ws.getCell(rowNum, 4).value = {formula:`COUNTIF(${SOD}!${col('Accessories (₹)')}2:${col('Accessories (₹)')}100000,">0")-SUM(D${firstRev}:D${lastRev})`};
     _adStyle(ws.getCell(rowNum,4), {fill:zebra, color:S.textMute, size:10, align:{h:'center', v:'center'}, fmt:'#,##0'});
     ws.getCell(rowNum, 5).value = {formula:`IFERROR(D${rowNum}/C${rowNum},0)`};
     _adStyle(ws.getCell(rowNum,5), {fill:zebra, color:S.textMute, size:10, align:{h:'center', v:'center'}, fmt:'0.0%'});
-    ws.getCell(rowNum, 6).value = {formula:`SUM(${SOD}!N:N)-SUM(F${firstRev}:F${lastRev})`};
+    ws.getCell(rowNum, 6).value = {formula:`SUM(${rng('Accessories (₹)')})-SUM(F${firstRev}:F${lastRev})`};
     _adStyle(ws.getCell(rowNum,6), {fill:zebra, color:S.textMute, bold:true, size:10, align:{h:'right', v:'center', indent:1}, fmt:'₹#,##0'});
     ws.getCell(rowNum, 7).value = {formula:`IFERROR(F${rowNum}/D${rowNum},0)`};
     _adStyle(ws.getCell(rowNum,7), {fill:zebra, color:S.textMute, size:10, align:{h:'right', v:'center', indent:1}, fmt:'₹#,##0'});
-    ws.getCell(rowNum, 8).value = {formula:`IFERROR(F${rowNum}/SUM(${SOD}!N:N),0)`};
+    ws.getCell(rowNum, 8).value = {formula:`IFERROR(F${rowNum}/SUM(${rng('Accessories (₹)')}),0)`};
     _adStyle(ws.getCell(rowNum,8), {fill:zebra, color:S.textMute, size:10, align:{h:'center', v:'center'}, fmt:'0.0%'});
     _accRow++;
   }
@@ -15652,7 +15908,7 @@ function _adBuildReport2Sheet(ws, m, dealSheetName){
   ws.getCell(totalRowNum, 3).value={formula:`SUM(C${_firstData}:C${_lastData})`};
   ws.getCell(totalRowNum, 4).value={formula:`SUM(D${_firstData}:D${_lastData})`};
   ws.getCell(totalRowNum, 5).value={formula:`IFERROR(D${totalRowNum}/C${totalRowNum},0)`};
-  ws.getCell(totalRowNum, 6).value={formula:`SUM(${SOD}!N:N)`};
+  ws.getCell(totalRowNum, 6).value={formula:`SUM(${rng('Accessories (₹)')})`};
   ws.getCell(totalRowNum, 7).value={formula:`IFERROR(F${totalRowNum}/D${totalRowNum},0)`};
   ws.getCell(totalRowNum, 8).value=1;
   [2,3,4,5,6,7,8].forEach(c => _adStyle(ws.getCell(totalRowNum, c), {
@@ -15662,35 +15918,36 @@ function _adBuildReport2Sheet(ws, m, dealSheetName){
   }));
 
   // ── Monthly Performance Trend Tracker — formula-driven ──
-  // Helper column AI in SOD holds the month number (1-12) per row (shifted
-  // from AG in v71 due to Refund (₹) / Net variance insert). For each
-  // KPI row we compute count/avg for the LAST TWO months present in data
-  // (via m.lastTwoMonths). If a month slot is unused the cell stays blank.
+  // All columns resolved dynamically by header name ("Month", "Is Insurance",
+  // "Is Finance In-house", "Is EW", "Is RSA", "Accessories (₹)") — no fixed
+  // letters. For each KPI row we compute count/avg for the LAST TWO months
+  // present in data (via m.lastTwoMonths). If a month slot is unused the
+  // cell stays blank.
   const mpt = [
     // [label, formulaTemplate(month), isPct, fmt]
-    ['Total Deliveries',          (mo) => `COUNTIFS(${SOD}!AI:AI,${mo})`,                                                                                false, '#,##0'],
-    ['Insurance Penetration %',   (mo) => `IFERROR(SUMIFS(${SOD}!AK:AK,${SOD}!AI:AI,${mo})/COUNTIFS(${SOD}!AI:AI,${mo}),0)`,                              true,  '0.00%'],
-    ['Finance (In-house) %',      (mo) => `IFERROR(SUMIFS(${SOD}!AL:AL,${SOD}!AI:AI,${mo})/COUNTIFS(${SOD}!AI:AI,${mo}),0)`,                              true,  '0.00%'],
-    ['EW Penetration %',          (mo) => `IFERROR(SUMIFS(${SOD}!AO:AO,${SOD}!AI:AI,${mo})/COUNTIFS(${SOD}!AI:AI,${mo}),0)`,                              true,  '0.00%'],
-    ['RSA Penetration %',         (mo) => `IFERROR(SUMIFS(${SOD}!AN:AN,${SOD}!AI:AI,${mo})/COUNTIFS(${SOD}!AI:AI,${mo}),0)`,                              true,  '0.00%'],
-    ['Accessories per Car (₹)',   (mo) => `IFERROR(SUMIFS(${SOD}!N:N,${SOD}!AI:AI,${mo})/COUNTIFS(${SOD}!AI:AI,${mo},${SOD}!N:N,">0"),0)`,                false, '#,##0']
+    ['Total Deliveries',          (mo) => `COUNTIFS(${rng('Month')},${mo})`,                                                                                       false, '#,##0'],
+    ['Insurance Penetration %',   (mo) => `IFERROR(SUMIFS(${rng('Is Insurance')},${rng('Month')},${mo})/COUNTIFS(${rng('Month')},${mo}),0)`,                       true,  '0.00%'],
+    ['Finance (In-house) %',      (mo) => `IFERROR(SUMIFS(${rng('Is Finance In-house')},${rng('Month')},${mo})/COUNTIFS(${rng('Month')},${mo}),0)`,                 true,  '0.00%'],
+    ['EW Penetration %',          (mo) => `IFERROR(SUMIFS(${rng('Is EW')},${rng('Month')},${mo})/COUNTIFS(${rng('Month')},${mo}),0)`,                               true,  '0.00%'],
+    ['RSA Penetration %',         (mo) => `IFERROR(SUMIFS(${rng('Is RSA')},${rng('Month')},${mo})/COUNTIFS(${rng('Month')},${mo}),0)`,                              true,  '0.00%'],
+    ['Accessories per Car (₹)',   (mo) => `IFERROR(SUMIFS(${rng('Accessories (₹)')},${rng('Month')},${mo})/COUNTIFS(${rng('Month')},${mo},${rng('Accessories (₹)')},">0"),0)`, false, '#,##0']
   ];
   mpt.forEach((row, i) => {
     const rowNum = 26+i, zebra = i%2===1 ? S.bgZebra : S.bgWhite;
-    [10,11,12,13].forEach(col => { ws.getCell(rowNum, col).fill = {type:'pattern', pattern:'solid', fgColor:{argb: _adARGB(zebra)}}; });
-    ws.mergeCells(rowNum, 10, rowNum, 11);
-    ws.getCell(rowNum, 10).value = row[0];
-    _adStyle(ws.getCell(rowNum, 10), {fill:zebra, color:S.textMed, size:9, align:{h:'left', v:'center', indent:1}});
-    // Month1 cell (col 12) — only set if we have a 1st month, else leave blank
+    [12,13,14,15].forEach(col => { ws.getCell(rowNum, col).fill = {type:'pattern', pattern:'solid', fgColor:{argb: _adARGB(zebra)}}; });
+    ws.mergeCells(rowNum, 12, rowNum, 13);
+    ws.getCell(rowNum, 12).value = row[0];
+    _adStyle(ws.getCell(rowNum, 12), {fill:zebra, color:S.textMed, size:9, align:{h:'left', v:'center', indent:1}});
+    // Month1 cell (col 14) — only set if we have a 1st month, else leave blank
     if(_mptLtm.length >= 1){
-      ws.getCell(rowNum, 12).value = {formula: row[1](_mptLtm[0].num)};
+      ws.getCell(rowNum, 14).value = {formula: row[1](_mptLtm[0].num)};
     }
-    _adStyle(ws.getCell(rowNum, 12), {fill: i%2===1 ? 'FFF7ED' : 'FFFBEB', color:S.textDark, bold:true, size:9, align:{h:'right', v:'center', indent:1}, fmt: row[3]});
-    // Month2 cell (col 13) — only set if we have a 2nd month, else leave blank
+    _adStyle(ws.getCell(rowNum, 14), {fill: i%2===1 ? 'FFF7ED' : 'FFFBEB', color:S.textDark, bold:true, size:9, align:{h:'right', v:'center', indent:1}, fmt: row[3]});
+    // Month2 cell (col 15) — only set if we have a 2nd month, else leave blank
     if(_mptLtm.length >= 2){
-      ws.getCell(rowNum, 13).value = {formula: row[1](_mptLtm[1].num)};
+      ws.getCell(rowNum, 15).value = {formula: row[1](_mptLtm[1].num)};
     }
-    _adStyle(ws.getCell(rowNum, 13), {fill: i%2===1 ? 'FFF7ED' : 'FFFBEB', color:S.textDark, bold:true, size:9, align:{h:'right', v:'center', indent:1}, fmt: row[3]});
+    _adStyle(ws.getCell(rowNum, 15), {fill: i%2===1 ? 'FFF7ED' : 'FFFBEB', color:S.textDark, bold:true, size:9, align:{h:'right', v:'center', indent:1}, fmt: row[3]});
   });
 
   // ── Section 4b: Some other Important Checks (right column, below MPT) ──
@@ -15703,8 +15960,12 @@ function _adBuildReport2Sheet(ws, m, dealSheetName){
   const _amt = (r, name) => fN(_drLookup(_H, r, name));
   const _txt = (r, name) => (_drLookup(_H, r, name) || '').toString().trim();
   // Each check: [label, refColumnName(unused), predicate]
-  // "No of Cases" = rows matching the predicate (computed). "Exception noted"
-  // is left for the auditor to fill in manually (blank).
+  // "No of Cases" = COUNT of rows matching the predicate (never a sum of the
+  // amount — _amt() returns the numeric value only for the >0 comparison).
+  // "Exception noted" is left for the auditor to fill in manually (blank).
+  // _amt() safely returns 0 for blank/null/non-numeric/missing-column values
+  // (via _drLookup + fN), so a missing source column degrades to a Count of 0
+  // instead of #REF!/undefined/NaN — never breaking the sheet.
   const _otherChecks = [
     ['Total Corporate Scheme',        'Corporate Discount - Actual Amount', r => _amt(r,'Corporate Discount - Actual Amount') > 0],
     ['Total Loyalty given',           'Loyalty Bonus - Actual Amount',      r => _amt(r,'Loyalty or Welcome Scheme - Actual Amount') > 0 || _amt(r,'Loyalty (TATA EV to EV) - Actual Amount') > 0 || _amt(r,'Loyalty (TATA ICE to EV) - Actual Amount') > 0],
@@ -15713,24 +15974,28 @@ function _adBuildReport2Sheet(ws, m, dealSheetName){
     ['Total OEM referral',            'Deal Type',                          r => _txt(r,'Deal Type') === 'OEM Referral'],
     ['Total CSD cases',               'Type of Customer',                   r => _txt(r,'Type of Customer').toUpperCase() === 'CSD'],
     ['Total Leasing Cases',           'Type of Customer',                   r => /leasing/i.test(_txt(r,'Type of Customer'))],
+    // NEW — Total FOC Accessories: count of rows where "FOC Accessories - Actual Amount" > 0
+    ['Total FOC Accessories',         'FOC Accessories - Actual Amount',    r => _amt(r,'FOC Accessories - Actual Amount') > 0],
+    // NEW — Total FOC EW: count of rows where "EW Discount - Actual Amount" > 0
+    ['Total FOC EW',                  'EW Discount - Actual Amount',        r => _amt(r,'EW Discount - Actual Amount') > 0],
   ];
   ws.getRow(33).height = 22;
-  ws.mergeCells('J33:L33'); ws.getCell('J33').value='SOME OTHER IMPORTANT CHECKS';
-  _adStyle(ws.getCell('J33'), {fill:S.greyHeader, color:S.navy, bold:true, size:12, align:{h:'center', v:'center'}});
+  ws.mergeCells('L33:N33'); ws.getCell('L33').value='SOME OTHER IMPORTANT CHECKS';
+  _adStyle(ws.getCell('L33'), {fill:S.greyHeader, color:S.navy, bold:true, size:12, align:{h:'center', v:'center'}});
   ['Category','No of Cases','Exception noted'].forEach((t,i) => {
-    const c=ws.getCell(34, 10+i); c.value=t;
+    const c=ws.getCell(34, 12+i); c.value=t;
     _adStyle(c, {fill:S.greyHead, color:'FFFFFF', bold:true, size:9, align:{h: i===0?'left':'center', v:'center', indent: i===0?1:0, wrap:true}});
   });
   _otherChecks.forEach((chk, i) => {
     const rowNum = 35+i, zebra = i%2===1 ? S.bgZebra : S.bgWhite;
     const cases = _rl.filter(chk[2]).length;
-    for(let col=10; col<=12; col++){ ws.getCell(rowNum, col).fill = {type:'pattern', pattern:'solid', fgColor:{argb: _adARGB(zebra)}}; }
-    ws.getCell(rowNum, 10).value = chk[0];
-    _adStyle(ws.getCell(rowNum,10), {fill:zebra, color:S.textDark, size:10, align:{h:'left', v:'center', indent:1}});
-    ws.getCell(rowNum, 11).value = cases;                       // No of Cases (computed)
-    _adStyle(ws.getCell(rowNum,11), {fill:zebra, color:S.textDark, bold:true, size:10, align:{h:'center', v:'center'}, fmt:'#,##0'});
+    for(let col=12; col<=14; col++){ ws.getCell(rowNum, col).fill = {type:'pattern', pattern:'solid', fgColor:{argb: _adARGB(zebra)}}; }
+    ws.getCell(rowNum, 12).value = chk[0];
+    _adStyle(ws.getCell(rowNum,12), {fill:zebra, color:S.textDark, size:10, align:{h:'left', v:'center', indent:1}});
+    ws.getCell(rowNum, 13).value = cases;                       // No of Cases (computed)
+    _adStyle(ws.getCell(rowNum,13), {fill:zebra, color:S.textDark, bold:true, size:10, align:{h:'center', v:'center'}, fmt:'#,##0'});
     // Exception noted — left blank for manual auditor entry
-    _adStyle(ws.getCell(rowNum,12), {fill:zebra, color:S.textDark, size:10, align:{h:'center', v:'center'}});
+    _adStyle(ws.getCell(rowNum,14), {fill:zebra, color:S.textDark, size:10, align:{h:'center', v:'center'}});
   });
 
   // ── Section 5: Avg Per Car discount with dynamic monthly breakdown ──
@@ -15752,51 +16017,50 @@ function _adBuildReport2Sheet(ws, m, dealSheetName){
   const _m2Label = _ltm5.length >= 2 ? `${_ltm5[1].name} (₹)` : '—';
   ['Scope Category', _m1Label, _m2Label, 'Grand Total (₹)'].forEach((t,i) => { const c=ws.getCell(38, 2+i); c.value=t; _adStyle(c, {fill:S.greyHead, color:'FFFFFF', bold:true, size:9, align:{h:'left', v:'center', indent:1}}); });
   // Each scope row computes avg discount per car (Σ Discount above scheme ÷ count of cars)
-  // Y column = Discount above scheme (shifted from W in v71); AB = Deal Type
-  // (was Z); AI = Month helper (was AG, shifted +2 in v71)
+  // Columns resolved dynamically by header name ("Discount above scheme",
+  // "Deal Type", "Month") — no fixed letters.
   [['In-Scope',             'In-scope'],
    ['Management Referral',  'Management Referral'],
    ['Out of Scope',         'Out of Scope'],
    ['OEM Referral',         'OEM Referral']].forEach((cat, i) => {
     const rowNum = 39+i, zebra = i%2===1 ? S.bgZebra : S.bgWhite;
-    [2,3,4,5].forEach(col => { ws.getCell(rowNum, col).fill = {type:'pattern', pattern:'solid', fgColor:{argb: _adARGB(zebra)}}; });
+    [2,3,4,5].forEach(cc => { ws.getCell(rowNum, cc).fill = {type:'pattern', pattern:'solid', fgColor:{argb: _adARGB(zebra)}}; });
     ws.getCell(rowNum, 2).value = cat[0];
     _adStyle(ws.getCell(rowNum,2), {fill:zebra, color:S.textDark, size:10, align:{h:'left', v:'center', indent:1}});
     // Month1 column (or blank if no month1)
     if(_ltm5.length >= 1){
-      ws.getCell(rowNum, 3).value = {formula:`IFERROR(SUMIFS(${SOD}!Y:Y,${SOD}!AB:AB,"${cat[1]}",${SOD}!AI:AI,${_ltm5[0].num})/COUNTIFS(${SOD}!AB:AB,"${cat[1]}",${SOD}!AI:AI,${_ltm5[0].num}),0)`};
+      ws.getCell(rowNum, 3).value = {formula:`IFERROR(SUMIFS(${rng('Discount above scheme')},${rng('Deal Type')},"${cat[1]}",${rng('Month')},${_ltm5[0].num})/COUNTIFS(${rng('Deal Type')},"${cat[1]}",${rng('Month')},${_ltm5[0].num}),0)`};
     } else {
       ws.getCell(rowNum, 3).value = 0;
     }
     _adStyle(ws.getCell(rowNum,3), {fill:zebra, color:S.textDark, size:10, align:{h:'right', v:'center', indent:1}, fmt:'#,##0'});
     // Month2 column (or blank if no month2)
     if(_ltm5.length >= 2){
-      ws.getCell(rowNum, 4).value = {formula:`IFERROR(SUMIFS(${SOD}!Y:Y,${SOD}!AB:AB,"${cat[1]}",${SOD}!AI:AI,${_ltm5[1].num})/COUNTIFS(${SOD}!AB:AB,"${cat[1]}",${SOD}!AI:AI,${_ltm5[1].num}),0)`};
+      ws.getCell(rowNum, 4).value = {formula:`IFERROR(SUMIFS(${rng('Discount above scheme')},${rng('Deal Type')},"${cat[1]}",${rng('Month')},${_ltm5[1].num})/COUNTIFS(${rng('Deal Type')},"${cat[1]}",${rng('Month')},${_ltm5[1].num}),0)`};
     } else {
       ws.getCell(rowNum, 4).value = 0;
     }
     _adStyle(ws.getCell(rowNum,4), {fill:zebra, color:S.textDark, size:10, align:{h:'right', v:'center', indent:1}, fmt:'#,##0'});
-    // Grand Total = SUMIFS(Y, AB=cat) / COUNTIF(AB, cat) — covers ALL months
-    ws.getCell(rowNum, 5).value = {formula:`IFERROR(SUMIFS(${SOD}!Y:Y,${SOD}!AB:AB,"${cat[1]}")/COUNTIF(${SOD}!AB:AB,"${cat[1]}"),0)`};
+    // Grand Total = SUMIFS(Discount above scheme, Deal Type=cat) / COUNTIF(...) — covers ALL months
+    ws.getCell(rowNum, 5).value = {formula:`IFERROR(SUMIFS(${rng('Discount above scheme')},${rng('Deal Type')},"${cat[1]}")/COUNTIF(${rng('Deal Type')},"${cat[1]}"),0)`};
     _adStyle(ws.getCell(rowNum,5), {fill:zebra, color:S.textDark, bold:true, size:10, align:{h:'right', v:'center', indent:1}, fmt:'#,##0'});
   });
-  // Row 43 — Grand Total across all scopes (also column Y)
+  // Row 43 — Grand Total across all scopes (also "Discount above scheme")
   ws.getCell('B43').value='Grand Total';
   ws.getCell('C43').value = _ltm5.length >= 1
-    ? {formula:`IFERROR(SUMIFS(${SOD}!Y:Y,${SOD}!AI:AI,${_ltm5[0].num})/COUNTIFS(${SOD}!AI:AI,${_ltm5[0].num}),0)`}
+    ? {formula:`IFERROR(SUMIFS(${rng('Discount above scheme')},${rng('Month')},${_ltm5[0].num})/COUNTIFS(${rng('Month')},${_ltm5[0].num}),0)`}
     : 0;
   ws.getCell('D43').value = _ltm5.length >= 2
-    ? {formula:`IFERROR(SUMIFS(${SOD}!Y:Y,${SOD}!AI:AI,${_ltm5[1].num})/COUNTIFS(${SOD}!AI:AI,${_ltm5[1].num}),0)`}
+    ? {formula:`IFERROR(SUMIFS(${rng('Discount above scheme')},${rng('Month')},${_ltm5[1].num})/COUNTIFS(${rng('Month')},${_ltm5[1].num}),0)`}
     : 0;
-  ws.getCell('E43').value={formula:`IFERROR(SUM(${SOD}!Y:Y)/COUNTA(${SOD}!A2:A100000),0)`};
+  ws.getCell('E43').value={formula:`IFERROR(SUM(${rng('Discount above scheme')})/COUNTA(${SOD}!${col('Customer Name')}2:${col('Customer Name')}100000),0)`};
   [2,3,4,5].forEach(c => _adStyle(ws.getCell(43,c), {fill:S.navy, color:'FFFFFF', bold:true, size:10, align:{h: c===2?'left':'right', v:'center', indent:1}, fmt: c>=3 ? '#,##0' : undefined}));
 
   // ── Section 6: Summary of Total Deals (per-model component breakup) ──
-  // Columns map to the 1_Summary_of_Deal sheet (shifted +2 in v71 due to
-  // Refund (₹) / Net variance being inserted after Variance):
-  //   M Ex-Showroom | T TCS | (P Reg + U Green Tax + S Fast Tag + V HP) |
-  //   O Insurance | N Accessories | (Q EW + R RSA) | W Other Charges |
-  //   X ➤ TOTAL DISC GIVEN ; Actual Deal = sum(components) − total disc.
+  // Columns resolved dynamically by HEADER NAME (Ex-Showroom (₹), TCS,
+  // Registration (₹) + Green Tax + Fast Tag + HP Charges, Insurance (₹),
+  // Accessories (₹), Extended Warranty (₹) + RSA (₹), Other Charges,
+  // ➤ TOTAL DISC GIVEN) — no fixed letters. Actual Deal = sum(components) − total disc.
   const _sdModels = Array.from(new Set((m._rowsList||[]).map(r => (_drLookup(_H, r, 'Model')||'(Blank)').toString().trim()).filter(Boolean))).sort();
   let sdRow = 45;
   ws.mergeCells(`B${sdRow}:K${sdRow}`);
@@ -15813,31 +16077,32 @@ function _adBuildReport2Sheet(ws, m, dealSheetName){
   const sdHeaderRow = sdRow;
   sdRow++;
   const sdFirstData = sdRow;
-  const sumByModel = (model, col) => {
+  // sumByModel(model, headerName) — header name resolved dynamically via rng()
+  const sumByModel = (model, headerName) => {
     const escM = model.replace(/"/g,'""');
-    return `SUMIFS(${SOD}!${col}:${col},${SOD}!B:B,"${escM}")`;
+    return `SUMIFS(${rng(headerName)},${rng('Model')},"${escM}")`;
   };
   _sdModels.forEach((model, i) => {
     const rowNum = sdRow, zebra = i%2===1 ? S.bgZebra : S.bgWhite;
-    for(let col=2; col<=11; col++){ ws.getCell(rowNum, col).fill = {type:'pattern', pattern:'solid', fgColor:{argb: _adARGB(zebra)}}; }
+    for(let cc=2; cc<=11; cc++){ ws.getCell(rowNum, cc).fill = {type:'pattern', pattern:'solid', fgColor:{argb: _adARGB(zebra)}}; }
     ws.getCell(rowNum, 2).value = model;
     _adStyle(ws.getCell(rowNum,2), {fill:zebra, color:S.textDark, size:10, align:{h:'left', v:'center', indent:1}});
-    // C Ex-Showroom (M)
-    ws.getCell(rowNum, 3).value = {formula: sumByModel(model,'M')};
-    // D TCS (T)
-    ws.getCell(rowNum, 4).value = {formula: sumByModel(model,'T')};
-    // E Registration + Green Tax + Fast Tag + HP  (P + U + S + V)
-    ws.getCell(rowNum, 5).value = {formula: `${sumByModel(model,'P')}+${sumByModel(model,'U')}+${sumByModel(model,'S')}+${sumByModel(model,'V')}`};
-    // F Insurance (O)
-    ws.getCell(rowNum, 6).value = {formula: sumByModel(model,'O')};
-    // G Accessories (N)
-    ws.getCell(rowNum, 7).value = {formula: sumByModel(model,'N')};
-    // H Extended Warranty + RSA (Q + R)
-    ws.getCell(rowNum, 8).value = {formula: `${sumByModel(model,'Q')}+${sumByModel(model,'R')}`};
-    // I Other Charges (W)
-    ws.getCell(rowNum, 9).value = {formula: sumByModel(model,'W')};
-    // J TOTAL DISC GIVEN (X)
-    ws.getCell(rowNum, 10).value = {formula: sumByModel(model,'X')};
+    // C Ex-Showroom
+    ws.getCell(rowNum, 3).value = {formula: sumByModel(model,'Ex-Showroom (₹)')};
+    // D TCS
+    ws.getCell(rowNum, 4).value = {formula: sumByModel(model,'TCS')};
+    // E Registration + Green Tax + Fast Tag + HP
+    ws.getCell(rowNum, 5).value = {formula: `${sumByModel(model,'Registration (₹)')}+${sumByModel(model,'Green Tax')}+${sumByModel(model,'Fast Tag')}+${sumByModel(model,'HP Charges')}`};
+    // F Insurance
+    ws.getCell(rowNum, 6).value = {formula: sumByModel(model,'Insurance (₹)')};
+    // G Accessories
+    ws.getCell(rowNum, 7).value = {formula: sumByModel(model,'Accessories (₹)')};
+    // H Extended Warranty + RSA
+    ws.getCell(rowNum, 8).value = {formula: `${sumByModel(model,'Extended Warranty (₹)')}+${sumByModel(model,'RSA (₹)')}`};
+    // I Other Charges
+    ws.getCell(rowNum, 9).value = {formula: sumByModel(model,'Other Charges')};
+    // J TOTAL DISC GIVEN
+    ws.getCell(rowNum, 10).value = {formula: sumByModel(model,'➤ TOTAL DISC GIVEN')};
     // K Actual Deal = sum(C:I) - J
     ws.getCell(rowNum, 11).value = {formula: `SUM(C${rowNum}:I${rowNum})-J${rowNum}`};
     [3,4,5,6,7,8,9,10,11].forEach(c => _adStyle(ws.getCell(rowNum,c), {fill:zebra, color:S.textDark, bold: c===11, size:9, align:{h:'right', v:'center', indent:1}, fmt:'#,##0'}));
@@ -16389,6 +16654,13 @@ function _adBuildSummaryOfDealSheet(ws, rowsList){
       align:{h:'left', v:'center', wrap:true, indent:1}
     });
   });
+  // ── Header-name -> column-letter map ──
+  // Built directly from the headers actually written above, so any Dashboard
+  // sheet that consumes this map always references the CURRENT column
+  // layout by name, never a stale hardcoded letter. This is what lets the
+  // Dashboard survive future column insertions/reorders without #REF!.
+  const headerColMap = {};
+  headers.forEach((h, i) => { headerColMap[h] = _adColLetter(i+1); });
   ws.getRow(1).height = 30;
   // Freeze first 3 columns (Customer/Model/Chassis) + header row
   ws.views = [{state:'frozen', ySplit:1, xSplit:3}];
@@ -16690,6 +16962,11 @@ function _adBuildSummaryOfDealSheet(ws, rowsList){
       showErrorMessage: false   // don't block existing system values that aren't in the list
     };
   }
+
+  // Expose the header->column map so the caller can pass it into
+  // _adBuildReport2Sheet(), which uses it to build all its cross-sheet
+  // formulas dynamically by HEADER NAME instead of fixed column letters.
+  return { headers, headerColMap };
 }
 
 // ── Browser download of an ExcelJS workbook ──
@@ -16723,13 +17000,13 @@ async function exportAuditDashboardForCurrent(){
     // the file. ExcelJS doesn't care about order, but Excel evaluates formulas
     // on open — sheet must exist by the time the dashboard is read.
     const wsSummary = wb.addWorksheet('1_Summary_of_Deal', {views:[{showGridLines:true}]});
-    _adBuildSummaryOfDealSheet(wsSummary, rows);
+    const _sodInfo = _adBuildSummaryOfDealSheet(wsSummary, rows);
     // Dashboard (R2 layout) — formula-driven, references '1_Summary_of_Deal'
     const ws2 = wb.addWorksheet('Dashboard', {
       views: [{showGridLines:false, zoomScale:90}],
       pageSetup: {paperSize:9, orientation:'landscape', fitToPage:true, fitToWidth:1, fitToHeight:0}
     });
-    _adBuildReport2Sheet(ws2, metrics);
+    _adBuildReport2Sheet(ws2, metrics, undefined, _sodInfo.headerColMap);
     // Reorder so Dashboard appears first in the tab strip (UX nicety)
     wb.worksheets.sort((a, b) => {
       const order = (n) => n === 'Dashboard' ? 0 : (n === '1_Summary_of_Deal' ? 1 : 2);
@@ -16802,13 +17079,13 @@ async function exportAuditDashboardForAll(){
       // Build the Deals sheet FIRST so Excel can resolve the Dashboard's formulas
       // (the Dashboard's SUMIF/COUNTIF formulas reference this sheet by name)
       const wsDeals = wb.addWorksheet(nDeals, {views:[{showGridLines:true}]});
-      _adBuildSummaryOfDealSheet(wsDeals, dealerRows);
+      const _sodInfo = _adBuildSummaryOfDealSheet(wsDeals, dealerRows);
       // Now the Dashboard — pass the deal sheet's name so the formulas point at it
       const wsDash = wb.addWorksheet(nDash, {
         views:[{showGridLines:false, zoomScale:90}],
         pageSetup: {paperSize:9, orientation:'landscape', fitToPage:true, fitToWidth:1, fitToHeight:0}
       });
-      _adBuildReport2Sheet(wsDash, m, nDeals);
+      _adBuildReport2Sheet(wsDash, m, nDeals, _sodInfo.headerColMap);
     }
     // Master All-Deals sheet at the end (every deal across every dealer)
     const allWS = wb.addWorksheet('All_Deals', {views:[{showGridLines:true}]});
@@ -16843,6 +17120,16 @@ async function exportAuditDashboardForAll(){
     });
 
     const dt = new Date().toISOString().slice(0,10);
+    // ── NEW (isolated) — optional "Dealer Performance" sheet ──
+    // Added AFTER the sort above so it never interacts with the existing
+    // Summary/Dashboard/Deals/All_Deals ordering logic. Only runs when the
+    // "☐ Dealer Performance" checkbox is checked; unchecked = this export
+    // behaves exactly as it did before (no sheet added, nothing else changed).
+    const _perfCb = document.getElementById('dr-perf-checkbox');
+    if(_perfCb && _perfCb.checked){
+      const perfWS = wb.addWorksheet('Dealer Performance');
+      _adBuildDealerPerformanceSheet(perfWS);
+    }
     await _adDownload(wb, 'Audit_Dashboard_All_Dealers_' + dt + '.xlsx');
   } catch(err){
     console.error(err);
@@ -16884,12 +17171,12 @@ async function exportAuditDashboardPerDealerZip(){
       // Build the Deals sheet FIRST so the Dashboard's SUMIF/COUNTIF formulas
       // (which reference the deal sheet by name) resolve correctly.
       const wsDeals = wb.addWorksheet('Deals', {views:[{showGridLines:true}]});
-      _adBuildSummaryOfDealSheet(wsDeals, dealerRows);
+      const _sodInfo = _adBuildSummaryOfDealSheet(wsDeals, dealerRows);
       const wsDash = wb.addWorksheet('Dashboard', {
         views:[{showGridLines:false, zoomScale:90}],
         pageSetup: {paperSize:9, orientation:'landscape', fitToPage:true, fitToWidth:1, fitToHeight:0}
       });
-      _adBuildReport2Sheet(wsDash, m, 'Deals');
+      _adBuildReport2Sheet(wsDash, m, 'Deals', _sodInfo.headerColMap);
       // Put Dashboard first in the tab strip for readability
       wb.worksheets.sort((a,b) => (a.name==='Dashboard'?0:1) - (b.name==='Dashboard'?0:1));
 
@@ -16936,6 +17223,291 @@ async function exportAuditDashboardPerDealerZip(){
 // The dashboard is FORMULA-DRIVEN — every KPI is a SUMIF/COUNTIF that
 // references 'Combined Summary of Deal'!$A:$A so the report stays accurate
 // even if the user edits cells in Excel after download.
+
+// ══════════════════════════════════════════════════════════════════════
+// NEW FEATURE — DEALER PERFORMANCE (isolated addition, does not touch or
+// depend on Combined Report / Audit Dashboard / Payment Tracker code below;
+// it only READS existing globals actualHeaders/actualRows via the existing
+// _drGetDealerships/_drLookup/fN helpers). No new upload process — uses the
+// already-loaded Extractor/Combined (Delivery Tracker) data. Controlled
+// entirely by the "☐ Dealer Performance" checkbox wired into
+// exportAuditDashboardForAll() below; there is no standalone button/modal
+// for this feature (removed per spec — checkbox-only).
+// ══════════════════════════════════════════════════════════════════════
+
+// Classifies an "Insurance Type" cell value into one of three buckets used
+// by the Dealer Performance report: INHOUSE / SELF / BLANK. Header-name
+// mapping only (Insurance Type → 'Insurance Type'), never a fixed column
+// letter. "Inhouse" matching is case/spacing-tolerant (matches the existing
+// convention elsewhere in this file, which checks the exact string
+// 'Inhouse'); blank / '-' / whitespace-only is its own bucket; anything
+// else non-blank counts as Self-arranged insurance.
+function _dpClassifyInsurance(val){
+  const v = (val==null ? '' : String(val)).trim();
+  if(!v || v === '-') return 'BLANK';
+  if(/^in\s*-?\s*house$/i.test(v) || /^inhouse$/i.test(v)) return 'INHOUSE';
+  return 'SELF';
+}
+
+// Classifies a "Finance Type" cell value into INHOUSE / OUTRIGHT / SELF.
+// Header-name mapping only ('Finance Type'). Outright = no financing (cash
+// purchase); Inhouse = dealership's own finance tie-up; everything else
+// (including blank/self-arranged loan) is bucketed as Self, so the three
+// Finance columns always sum to that dealer's Total Bookings.
+function _dpClassifyFinance(val){
+  const v = (val==null ? '' : String(val)).trim();
+  if(/^in\s*-?\s*house$/i.test(v) || /^inhouse$/i.test(v)) return 'INHOUSE';
+  if(/outright/i.test(v) || /^cash$/i.test(v)) return 'OUTRIGHT';
+  return 'SELF';
+}
+
+// Builds the dealership-wise Dealer Performance COUNT summary (Report 1).
+// Data source: the existing combined Delivery Tracker data (actualHeaders/
+// actualRows), grouped by the existing 'Dealership' field via the existing,
+// unmodified _drGetDealerships(). Every field is looked up by exact HEADER
+// NAME (never a fixed column letter):
+//   Dealer Name        → 'Dealership'
+//   Insurance Type      → 'Insurance Type'
+//   Finance Type        → 'Finance Type'
+//   EW                  → 'EW - Actual Amount' (count where > 0)
+//   Accessories Sold    → 'Accessories' (count where > 1 — the SAME
+//                         threshold already used elsewhere in this file,
+//                         e.g. _adComputeMetrics's accCount and the
+//                         Summary-of-Deal sheet's "Is Accessories" helper)
+function _computeDealerPerformanceCounts(){
+  const H = actualHeaders;
+  const dealers = _drGetDealerships();   // existing function, untouched — [[name, count], ...]
+  const dIdx = H.indexOf('Dealership');
+
+  const rowsByDealer = {};
+  if(dIdx >= 0){
+    actualRows.forEach(r => {
+      const d = (r[dIdx]||'').trim() || '(Blank)';
+      (rowsByDealer[d] = rowsByDealer[d] || []).push(r);
+    });
+  }
+
+  const summary = dealers.map(([name]) => {
+    const rowsList = rowsByDealer[name] || [];
+    let inhouseIns=0, selfIns=0, blankIns=0, inhouseFin=0, selfFin=0, outrightFin=0, ew=0, acc=0;
+    rowsList.forEach(r => {
+      const insBucket = _dpClassifyInsurance(_drLookup(H, r, 'Insurance Type'));
+      if(insBucket === 'INHOUSE') inhouseIns++;
+      else if(insBucket === 'SELF') selfIns++;
+      else blankIns++;
+
+      const finBucket = _dpClassifyFinance(_drLookup(H, r, 'Finance Type'));
+      if(finBucket === 'INHOUSE') inhouseFin++;
+      else if(finBucket === 'OUTRIGHT') outrightFin++;
+      else selfFin++;
+
+      if(fN(_drLookup(H, r, 'EW - Actual Amount')) > 0) ew++;
+      // Same existing threshold used throughout this file for "accessories sold"
+      if(fN(_drLookup(H, r, 'Accessories')) > 1) acc++;
+    });
+    const total = inhouseIns + selfIns + blankIns;
+    return {
+      name, total,
+      inhouseIns, selfIns, blankIns,
+      inhouseFin, selfFin, outrightFin,
+      ew, acc
+    };
+  });
+
+  const grand = summary.reduce((a, d) => {
+    a.total += d.total; a.inhouseIns += d.inhouseIns; a.selfIns += d.selfIns; a.blankIns += d.blankIns;
+    a.inhouseFin += d.inhouseFin; a.selfFin += d.selfFin; a.outrightFin += d.outrightFin;
+    a.ew += d.ew; a.acc += d.acc;
+    return a;
+  }, {total:0, inhouseIns:0, selfIns:0, blankIns:0, inhouseFin:0, selfFin:0, outrightFin:0, ew:0, acc:0});
+  grand.name = 'TOTAL / ALL DEALERS';
+
+  return {summary, grand};
+}
+
+// Builds the dealership+SC-wise Dealer Performance breakdown (the new
+// section added below "Dealer Performance %"). Groups by the COMBINATION
+// of 'Dealership' and 'SC Name' (both existing header-mapped fields — SC
+// Name is read from the data, never hardcoded). Reuses the exact same
+// classification/threshold logic as _computeDealerPerformanceCounts (via
+// the same _dpClassifyInsurance / _dpClassifyFinance helpers and the same
+// 'EW - Actual Amount' > 0 / 'Accessories' > 1 thresholds) so results stay
+// consistent with the dealer-only sections above it.
+function _computeDealerSCPerformanceCounts(){
+  const H = actualHeaders;
+  const dIdx = H.indexOf('Dealership');
+  const scIdx = H.indexOf('SC Name');
+
+  const groups = {};   // "dealer||sc" -> {dealer, sc, rows:[...]}
+  actualRows.forEach(r => {
+    const dealer = dIdx >= 0 ? ((r[dIdx]||'').trim() || '(Blank)') : '(Blank)';
+    const sc     = scIdx >= 0 ? ((r[scIdx]||'').trim() || '(Blank)') : '(Blank)';
+    const key = dealer + '||' + sc;
+    if(!groups[key]) groups[key] = {dealer, sc, rows:[]};
+    groups[key].rows.push(r);
+  });
+
+  const summary = Object.values(groups).map(g => {
+    let inhouseIns=0, selfIns=0, blankIns=0, inhouseFin=0, selfFin=0, outrightFin=0, ew=0, acc=0;
+    g.rows.forEach(r => {
+      const insBucket = _dpClassifyInsurance(_drLookup(H, r, 'Insurance Type'));
+      if(insBucket === 'INHOUSE') inhouseIns++;
+      else if(insBucket === 'SELF') selfIns++;
+      else blankIns++;
+
+      const finBucket = _dpClassifyFinance(_drLookup(H, r, 'Finance Type'));
+      if(finBucket === 'INHOUSE') inhouseFin++;
+      else if(finBucket === 'OUTRIGHT') outrightFin++;
+      else selfFin++;
+
+      if(fN(_drLookup(H, r, 'EW - Actual Amount')) > 0) ew++;
+      if(fN(_drLookup(H, r, 'Accessories')) > 1) acc++;
+    });
+    const total = inhouseIns + selfIns + blankIns;
+    return {
+      dealer: g.dealer, sc: g.sc, total,
+      inhouseIns, selfIns, blankIns,
+      inhouseFin, selfFin, outrightFin,
+      ew, acc
+    };
+  });
+
+  // Stable, readable ordering: by Dealer, then SC Name
+  summary.sort((a, b) => a.dealer.localeCompare(b.dealer) || a.sc.localeCompare(b.sc));
+
+  return summary;
+}
+
+// Writes the Dealer Performance report into an ExcelJS worksheet using a
+// SIDE-BY-SIDE (horizontal) layout — "Dealer Performance" (Count) on the
+// left, "Dealer Performance %" on the right, in the SAME row, for both the
+// dealer-only block and the Dealer+SC block below it. This function only
+// changes CELL POSITIONS versus the previous vertical layout — every
+// number written is still produced by the exact same, unmodified
+// _computeDealerPerformanceCounts() / _computeDealerSCPerformanceCounts()
+// calls and the exact same per-row value arrays / percentage formula
+// (category count ÷ that row's OWN total) as before. Used ONLY by
+// exportAuditDashboardForAll() when its "☐ Dealer Performance" checkbox is
+// checked. Uses the existing _AD_STYLE / _adStyle helpers so its look
+// matches the rest of this workbook.
+function _adBuildDealerPerformanceSheet(ws){
+  const S = _AD_STYLE;
+  const {summary, grand} = _computeDealerPerformanceCounts();   // unchanged calculation
+  const scSummary = _computeDealerSCPerformanceCounts();        // unchanged calculation
+
+  const countHeaders = [
+    'Dealer Name','Total','Inhouse Insurance','Self Insurance','Blank(-)',
+    'Finance Inhouse','Finance Self','Outright','EW','Accessories Sold'
+  ];
+  const scCountHeaders = [
+    'Dealer Name','SC Name','Total','Inhouse Insurance','Self Insurance','Blank(-)',
+    'Finance Inhouse','Finance Self','Outright','EW','Accessories Sold'
+  ];
+
+  // ── Column layout ──
+  // Block A (dealer-only):  left = cols 1-10, gap = 11-12, right (%) = 13-22
+  // Block B (dealer + SC):  left = cols 1-11, gap = 12-13, right (%) = 14-23
+  // (Both blocks' left tables share columns 1-10/11 since they occupy
+  // different row ranges — reusing columns vertically is fine in Excel.)
+  const A_LEFT = 1, A_RIGHT = 13;
+  const B_LEFT = 1, B_RIGHT = 14;
+
+  // Widths chosen so every column works for whichever block/table uses it
+  // (dealer-only tables in one row range, Dealer+SC tables in another).
+  const widths = [30,20,16,16,14,14,14,12,12,16, 16,3, 30,30,20,16,16,14,14,14,12,16, 12,16];
+  widths.forEach((w, i) => { ws.getColumn(i+1).width = w; });
+
+  const sectionTitle = (rowNum, startCol, span, text) => {
+    ws.mergeCells(rowNum, startCol, rowNum, startCol + span - 1);
+    const c = ws.getCell(rowNum, startCol);
+    c.value = text;
+    _adStyle(c, {fill:S.greyHeader, color:S.navy, bold:true, size:12, align:{h:'center', v:'center'}});
+  };
+  const headerRowAt = (rowNum, startCol, headers) => {
+    headers.forEach((h, i) => {
+      const c = ws.getCell(rowNum, startCol + i);
+      c.value = h;
+      _adStyle(c, {fill:S.navy, color:'FFFFFF', bold:true, size:10, align:{h: i<2 && headers===scCountHeaders ? 'left' : (i===0?'left':'center'), v:'center', indent: (i===0 || (i===1 && headers===scCountHeaders))?1:0, wrap:true}});
+    });
+  };
+  const writeCountRowAt = (d, rowNum, startCol, isTotal, hasSC) => {
+    const zebra = isTotal ? null : (rowNum % 2 === 0 ? S.bgZebra : S.bgWhite);
+    const vals = hasSC
+      ? [d.dealer, d.sc, d.total, d.inhouseIns, d.selfIns, d.blankIns, d.inhouseFin, d.selfFin, d.outrightFin, d.ew, d.acc]
+      : [d.name, d.total, d.inhouseIns, d.selfIns, d.blankIns, d.inhouseFin, d.selfFin, d.outrightFin, d.ew, d.acc];
+    vals.forEach((v, i) => {
+      const c = ws.getCell(rowNum, startCol + i);
+      c.value = v;
+      const textCol = hasSC ? i < 2 : i === 0;
+      const fmt = textCol ? undefined : '#,##0';
+      if(isTotal) _adStyle(c, {fill:S.navy, color:'FFFFFF', bold:true, size:10, align:{h: textCol?'left':'right', v:'center', indent: textCol?1:0}, fmt});
+      else _adStyle(c, {fill:zebra, color:S.textDark, size:10, align:{h: textCol?'left':'right', v:'center', indent: textCol?1:0}, fmt});
+    });
+  };
+  // Percentage formula is unchanged either way: category count ÷ that ROW's
+  // OWN Total, never the overall/grand total. hasSC=true renders the
+  // Dealer+SC shape (11 cols, incl. SC Name) instead of the dealer-only
+  // shape (10 cols) — same formula, just matching whichever row source
+  // (summary vs scSummary) it's given.
+  const writePctRowAt = (d, rowNum, startCol, isTotal, hasSC) => {
+    const zebra = isTotal ? null : (rowNum % 2 === 0 ? S.bgZebra : S.bgWhite);
+    const n = d.total || 0;
+    const pct = (x) => n ? x / n : 0;
+    const vals = hasSC
+      ? [d.dealer, d.sc, pct(d.total), pct(d.inhouseIns), pct(d.selfIns), pct(d.blankIns), pct(d.inhouseFin), pct(d.selfFin), pct(d.outrightFin), pct(d.ew), pct(d.acc)]
+      : [d.name, pct(d.total), pct(d.inhouseIns), pct(d.selfIns), pct(d.blankIns), pct(d.inhouseFin), pct(d.selfFin), pct(d.outrightFin), pct(d.ew), pct(d.acc)];
+    vals.forEach((v, i) => {
+      const c = ws.getCell(rowNum, startCol + i);
+      c.value = v;
+      const textCol = hasSC ? i < 2 : i === 0;
+      const fmt = textCol ? undefined : '0.0%';
+      if(isTotal) _adStyle(c, {fill:S.navy, color:'FFFFFF', bold:true, size:10, align:{h: textCol?'left':'right', v:'center', indent: textCol?1:0}, fmt});
+      else _adStyle(c, {fill:zebra, color:S.textDark, size:10, align:{h: textCol?'left':'right', v:'center', indent: textCol?1:0}, fmt});
+    });
+  };
+
+  // ══ BLOCK A — Dealer-only: "Dealer Performance" | "Dealer Performance %" (same row) ══
+  const A_TITLE_ROW = 1, A_HEADER_ROW = 2, A_DATA_START = 3;
+  sectionTitle(A_TITLE_ROW, A_LEFT, countHeaders.length, 'Dealer Performance');
+  sectionTitle(A_TITLE_ROW, A_RIGHT, countHeaders.length, 'Dealer Performance %');
+  ws.getRow(A_TITLE_ROW).height = 22;
+  headerRowAt(A_HEADER_ROW, A_LEFT, countHeaders);
+  headerRowAt(A_HEADER_ROW, A_RIGHT, countHeaders);
+  ws.getRow(A_HEADER_ROW).height = 24;
+  summary.forEach((d, i) => {
+    const rowNum = A_DATA_START + i;
+    writeCountRowAt(d, rowNum, A_LEFT, false, false);
+    writePctRowAt(d, rowNum, A_RIGHT, false, false);
+  });
+  const A_TOTAL_ROW = A_DATA_START + summary.length;
+  writeCountRowAt(grand, A_TOTAL_ROW, A_LEFT, true, false);
+  writePctRowAt(grand, A_TOTAL_ROW, A_RIGHT, true, false);
+
+  // ══ BLOCK B — Dealer + SC: "Dealer Performance" (SC-wise) | "Dealer Performance %" (same row) ══
+  // FIXED: the right side now shows the percentage for the SAME Dealer+SC
+  // row as the left side (via scSummary, the exact same, unmodified
+  // Dealer+SC aggregation used by the left table) — each percentage is
+  // that Dealer+SC row's OWN category count ÷ that row's OWN Total, same
+  // formula convention used everywhere else in this report. Previously this
+  // reused the dealer-only percentages, which didn't line up with the
+  // SC-wise rows on the left; that mismatch is what this fixes.
+  const B_TITLE_ROW = A_TOTAL_ROW + 3;   // 2 blank rows of spacing, then title
+  const B_HEADER_ROW = B_TITLE_ROW + 1, B_DATA_START = B_TITLE_ROW + 2;
+  sectionTitle(B_TITLE_ROW, B_LEFT, scCountHeaders.length, 'Dealer Performance');
+  sectionTitle(B_TITLE_ROW, B_RIGHT, scCountHeaders.length, 'Dealer Performance %');
+  ws.getRow(B_TITLE_ROW).height = 22;
+  headerRowAt(B_HEADER_ROW, B_LEFT, scCountHeaders);
+  headerRowAt(B_HEADER_ROW, B_RIGHT, scCountHeaders);
+  ws.getRow(B_HEADER_ROW).height = 24;
+  scSummary.forEach((d, i) => {
+    const rowNum = B_DATA_START + i;
+    writeCountRowAt(d, rowNum, B_LEFT, false, true);
+    writePctRowAt(d, rowNum, B_RIGHT, false, true);
+  });
+
+  ws.views = [{showGridLines:false, state:'frozen', ySplit:2}];
+}
+// ══════════════════ END DEALER PERFORMANCE (new feature) ═══════════════
 
 // ── Open the dealer-picker modal ──
 function openCombinedReportPicker(){
