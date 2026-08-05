@@ -16971,6 +16971,17 @@ function _adBuildSummaryOfDealSheet(ws, rowsList){
 
 // ── Browser download of an ExcelJS workbook ──
 async function _adDownload(wb, fileName){
+  // ── Fix: force Excel to fully recalculate on open ──
+  // ExcelJS writes formula STRINGS but does not compute/cache their results
+  // (it can't — it doesn't have a calculation engine). Without this flag,
+  // some viewers/apps display those formula cells as blank until the user
+  // manually forces a recalculation (F9), even though the formulas
+  // themselves are completely correct. Setting fullCalcOnLoad tells Excel
+  // to always do a full recalc the moment the file is opened, so Count /
+  // Avg / % values in the Combined Dashboard (and every other exported
+  // sheet) are populated immediately — no calculation logic, layout, or
+  // formatting changes anywhere; this only affects when Excel recalculates.
+  wb.calcProperties.fullCalcOnLoad = true;
   const buf = await wb.xlsx.writeBuffer();
   const blob = new Blob([buf], {type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
   const url = URL.createObjectURL(blob);
@@ -16978,6 +16989,426 @@ async function _adDownload(wb, fileName){
   a.href = url; a.download = fileName;
   document.body.appendChild(a); a.click();
   setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 200);
+}
+
+// ════════════════════════════════════════════════════════════════════════
+// ── Combined Dashboard: freeze formulas → static values on export ──
+// ════════════════════════════════════════════════════════════════════════
+// Requirement: when the "Combined Dealership Audit Report" is downloaded,
+// ONLY the "Combined Dashboard" sheet should be exported with plain
+// calculated values (Count / Average / Total / Variance / % / KPI etc.)
+// — no live Excel formulas in any of its cells. Every other sheet
+// ("Combined Summary of Deal", "Dealer-wise Per Car Avg", "Model-wise Per
+// Car Avg", "Dealer Model Breakup", "Dealer Location Breakup", and any
+// future sheet) must keep its formulas / data / formatting exactly as
+// originally built — this code path is never applied to them.
+//
+// How it works: _cbBuildDashboard() writes every KPI cell as an ExcelJS
+// formula object ({formula:'...'}), referencing 'Combined Summary of
+// Deal' (a plain-data sheet — never formulas) and, for a few roll-up/total
+// cells, other cells within the Combined Dashboard sheet itself. Below is
+// a small formula parser + evaluator (COUNTA/COUNTIF/COUNTIFS/SUMIF/
+// SUMIFS/SUM/AVERAGE/AVERAGEIF/IFERROR + basic arithmetic) that computes
+// the exact same result Excel would, then OVERWRITES each formula cell's
+// `.value` with that plain number/string — leaving `.style`, `.numFmt`,
+// merged-cell ranges, fills, borders and layout completely untouched.
+// Same-sheet cell references are resolved recursively (with memoization),
+// so total/roll-up rows that sum other formula cells above them resolve
+// correctly regardless of build order.
+
+function _cbColLetterToNum(letter){
+  let n = 0;
+  for(let i=0;i<letter.length;i++) n = n*26 + (letter.charCodeAt(i)-64);
+  return n;
+}
+function _cbAddrToRowCol(addr){
+  const m = /^\$?([A-Z]+)\$?([0-9]+)$/.exec(addr);
+  if(!m) throw new Error('Bad cell address: ' + addr);
+  return { col: _cbColLetterToNum(m[1]), row: parseInt(m[2], 10) };
+}
+
+// ── Tiny recursive-descent parser for the Excel-formula subset used by
+//    the Combined Dashboard sheet (and, transitively, any helper formulas
+//    it reads from Combined Summary of Deal, e.g. the IF()-based flag
+//    columns) ──
+function _cbParseFormula(src){
+  let i = 0;
+  const n = src.length;
+  function skipWs(){ while(i < n && /\s/.test(src[i])) i++; }
+  // Comparisons (=, <>, >=, <=, >, <) bind loosest — needed for IF(cond,...)
+  function parseTop(){
+    skipWs();
+    let node = parseExpr();
+    skipWs();
+    let op = null;
+    if(src[i] === '<' && src[i+1] === '>'){ op = '<>'; i += 2; }
+    else if(src[i] === '>' && src[i+1] === '='){ op = '>='; i += 2; }
+    else if(src[i] === '<' && src[i+1] === '='){ op = '<='; i += 2; }
+    else if(src[i] === '='){ op = '='; i += 1; }
+    else if(src[i] === '>'){ op = '>'; i += 1; }
+    else if(src[i] === '<'){ op = '<'; i += 1; }
+    if(op){
+      const right = parseExpr();
+      return {type:'compare', op, left:node, right};
+    }
+    return node;
+  }
+  function parseExpr(){
+    skipWs();
+    let node = parseTerm();
+    for(;;){
+      skipWs();
+      if(src[i] === '+' || src[i] === '-'){
+        const op = src[i]; i++;
+        node = {type:'binop', op, left:node, right:parseTerm()};
+      } else break;
+    }
+    return node;
+  }
+  function parseTerm(){
+    let node = parseFactor();
+    for(;;){
+      skipWs();
+      if(src[i] === '*' || src[i] === '/'){
+        const op = src[i]; i++;
+        node = {type:'binop', op, left:node, right:parseFactor()};
+      } else break;
+    }
+    return node;
+  }
+  function parseFactor(){
+    skipWs();
+    if(src[i] === '-'){ i++; return {type:'unary', op:'-', arg:parseFactor()}; }
+    if(src[i] === '('){ i++; const e = parseTop(); skipWs(); if(src[i] === ')') i++; return e; }
+    if(src[i] === '"'){ return parseString(); }
+    if(src[i] === "'"){ return parseRefMaybeSheet(); }
+    if(/[0-9.]/.test(src[i])){ return parseNumber(); }
+    if(/[A-Za-z_$]/.test(src[i])){ return parseNameOrRef(); }
+    throw new Error('Unexpected char in Combined Dashboard formula: "' + src[i] + '" in: ' + src);
+  }
+  function parseString(){
+    i++;
+    let s = '';
+    while(i < n){
+      if(src[i] === '"'){
+        if(src[i+1] === '"'){ s += '"'; i += 2; continue; }
+        i++; break;
+      }
+      s += src[i]; i++;
+    }
+    return {type:'str', value:s};
+  }
+  function parseNumber(){
+    const start = i;
+    while(i < n && /[0-9.]/.test(src[i])) i++;
+    return {type:'num', value: parseFloat(src.slice(start, i))};
+  }
+  function parseRefMaybeSheet(){
+    i++; // opening '
+    let s = '';
+    while(i < n && src[i] !== "'"){ s += src[i]; i++; }
+    i++; // closing '
+    skipWs();
+    if(src[i] === '!') i++;
+    return parseCellOrRange(s);
+  }
+  function parseNameOrRef(){
+    const start = i;
+    while(i < n && /[A-Za-z0-9_$]/.test(src[i])) i++;
+    const name = src.slice(start, i);
+    skipWs();
+    if(src[i] === '('){
+      i++;
+      const args = [];
+      skipWs();
+      if(src[i] !== ')'){
+        args.push(parseTop());
+        skipWs();
+        while(src[i] === ','){
+          i++;
+          args.push(parseTop());
+          skipWs();
+        }
+      }
+      if(src[i] === ')') i++;
+      return {type:'call', name: name.toUpperCase(), args};
+    }
+    if(src[i] === '!'){ i++; return parseCellOrRange(name); }
+    return parseCellOrRangeFromToken(name);
+  }
+  function parseCellOrRange(sheetName){
+    skipWs();
+    const start = i;
+    while(i < n && /[A-Za-z0-9$]/.test(src[i])) i++;
+    const first = src.slice(start, i);
+    skipWs();
+    if(src[i] === ':'){
+      i++;
+      const s2 = i;
+      while(i < n && /[A-Za-z0-9$]/.test(src[i])) i++;
+      return {type:'range', sheet: sheetName, start: first, end: src.slice(s2, i)};
+    }
+    return {type:'ref', sheet: sheetName, addr: first};
+  }
+  function parseCellOrRangeFromToken(token){
+    skipWs();
+    if(src[i] === ':'){
+      i++;
+      const s2 = i;
+      while(i < n && /[A-Za-z0-9$]/.test(src[i])) i++;
+      return {type:'range', sheet: null, start: token, end: src.slice(s2, i)};
+    }
+    return {type:'ref', sheet: null, addr: token};
+  }
+  return parseTop();
+}
+
+function _cbNum(v){
+  if(v === null || v === undefined || v === '') return 0;
+  if(v instanceof Date) return 0;
+  if(typeof v === 'boolean') return v ? 1 : 0;
+  const num = typeof v === 'number' ? v : parseFloat(v);
+  return isNaN(num) ? 0 : num;
+}
+function _cbCriteriaMatch(cellVal, criteria){
+  const a = (cellVal === null || cellVal === undefined) ? '' : String(cellVal).trim();
+  const b = String(criteria).trim();
+  return a.toLowerCase() === b.toLowerCase();
+}
+// Excel-style comparison used inside IF() conditions. Numeric compare when
+// both sides parse as numbers; otherwise case-insensitive string compare
+// (matches how COUNTIF/SUMIF criteria are already treated in this engine).
+function _cbCompareVals(a, b, op){
+  const numeric = (x) => {
+    if(typeof x === 'number') return x;
+    if(x === null || x === undefined || x === '') return null;
+    const f = parseFloat(x);
+    return (!isNaN(f) && isFinite(x !== '' ? x : NaN)) ? f : (!isNaN(f) ? f : null);
+  };
+  if(op === '=' || op === '<>'){
+    const an = numeric(a), bn = numeric(b);
+    let eq;
+    if(an !== null && bn !== null) eq = (an === bn);
+    else eq = String(a===null||a===undefined?'':a).trim().toLowerCase() === String(b===null||b===undefined?'':b).trim().toLowerCase();
+    return op === '=' ? eq : !eq;
+  }
+  const an = _cbNum(a), bn = _cbNum(b);
+  if(op === '>') return an > bn;
+  if(op === '<') return an < bn;
+  if(op === '>=') return an >= bn;
+  if(op === '<=') return an <= bn;
+  return false;
+}
+function _cbRawCellValue(cell){
+  const v = cell.value;
+  if(v === null || v === undefined) return null;
+  if(typeof v === 'object'){
+    if(v instanceof Date) return v;
+    if('richText' in v) return v.richText.map(t => t.text).join('');
+    if('text' in v) return v.text;
+  }
+  return v;
+}
+function _cbIsFormulaObj(v){
+  return v && typeof v === 'object' && !(v instanceof Date) && ('formula' in v);
+}
+
+// `ws` = the worksheet a reference resolves against by default (i.e. the
+// sheet the CURRENT formula lives on); cross-sheet refs (e.g. 'Combined
+// Summary of Deal'!...) switch to that other sheet for this lookup only.
+// `mutate` controls whether resolved formula cells get written back as
+// static values — true only for the sheet actively being frozen (the
+// Combined Dashboard); false for every other sheet reached via a
+// cross-sheet reference, so e.g. Combined Summary of Deal's own IF()
+// helper formulas are evaluated (to get a number to aggregate) but never
+// overwritten — that sheet must keep its live formulas exactly as-is.
+function _cbGetRangeValues(node, ws, wb, memo, mutate){
+  const sheetName = node.sheet;
+  const targetWs = sheetName ? wb.getWorksheet(sheetName) : ws;
+  if(!targetWs) throw new Error('Sheet not found for Combined Dashboard formula: ' + sheetName);
+  const targetMutate = sheetName ? false : mutate;
+  const startAddr = node.type === 'range' ? node.start : node.addr;
+  const endAddr = node.type === 'range' ? node.end : node.addr;
+  const sPos = _cbAddrToRowCol(startAddr);
+  const ePos = _cbAddrToRowCol(endAddr);
+  const colNum = sPos.col;
+  let endRow = ePos.row;
+  const cap = targetWs.rowCount || endRow;
+  if(endRow > cap) endRow = cap;
+  const vals = [];
+  for(let r = sPos.row; r <= endRow; r++){
+    vals.push(_cbResolveCell(targetWs, r, colNum, wb, memo, targetMutate));
+  }
+  return vals;
+}
+
+function _cbEvalNode(node, ws, wb, memo, mutate){
+  switch(node.type){
+    case 'num': return node.value;
+    case 'str': return node.value;
+    case 'ref': return _cbGetRangeValues(node, ws, wb, memo, mutate)[0];
+    case 'range': return _cbGetRangeValues(node, ws, wb, memo, mutate);
+    case 'unary': {
+      const v = _cbEvalNode(node.arg, ws, wb, memo, mutate);
+      return node.op === '-' ? -_cbNum(v) : v;
+    }
+    case 'compare': {
+      const l = _cbEvalNode(node.left, ws, wb, memo, mutate);
+      const r = _cbEvalNode(node.right, ws, wb, memo, mutate);
+      return _cbCompareVals(l, r, node.op);
+    }
+    case 'binop': {
+      const l = _cbNum(_cbEvalNode(node.left, ws, wb, memo, mutate));
+      const r = _cbNum(_cbEvalNode(node.right, ws, wb, memo, mutate));
+      if(node.op === '+') return l + r;
+      if(node.op === '-') return l - r;
+      if(node.op === '*') return l * r;
+      if(node.op === '/'){ if(r === 0) throw new Error('#DIV/0!'); return l / r; }
+      break;
+    }
+    case 'call': return _cbEvalFunc(node.name, node.args, ws, wb, memo, mutate);
+  }
+  throw new Error('Cannot evaluate Combined Dashboard formula node: ' + node.type);
+}
+
+function _cbEvalFunc(name, argNodes, ws, wb, memo, mutate){
+  const getVals = (node) => (node.type === 'range' || node.type === 'ref')
+    ? _cbGetRangeValues(node, ws, wb, memo, mutate)
+    : [_cbEvalNode(node, ws, wb, memo, mutate)];
+  switch(name){
+    case 'IF': {
+      const cond = _cbEvalNode(argNodes[0], ws, wb, memo, mutate);
+      const branch = cond ? argNodes[1] : argNodes[2];
+      return branch !== undefined ? _cbEvalNode(branch, ws, wb, memo, mutate) : (cond ? true : false);
+    }
+    case 'SUM':
+      return getVals(argNodes[0]).reduce((s,v) => s + _cbNum(v), 0);
+    case 'COUNTA':
+      return getVals(argNodes[0]).filter(v => v !== null && v !== undefined && v !== '').length;
+    case 'COUNTIF': {
+      const vals = getVals(argNodes[0]);
+      const criteria = _cbEvalNode(argNodes[1], ws, wb, memo, mutate);
+      return vals.filter(v => _cbCriteriaMatch(v, criteria)).length;
+    }
+    case 'COUNTIFS': {
+      const rangeArrays = [], criteriaVals = [];
+      for(let i = 0; i < argNodes.length; i += 2){
+        rangeArrays.push(getVals(argNodes[i]));
+        criteriaVals.push(_cbEvalNode(argNodes[i+1], ws, wb, memo, mutate));
+      }
+      let count = 0;
+      for(let r = 0; r < rangeArrays[0].length; r++){
+        let ok = true;
+        for(let k = 0; k < rangeArrays.length; k++){
+          if(!_cbCriteriaMatch(rangeArrays[k][r], criteriaVals[k])){ ok = false; break; }
+        }
+        if(ok) count++;
+      }
+      return count;
+    }
+    case 'SUMIF': {
+      const critVals = getVals(argNodes[0]);
+      const criteria = _cbEvalNode(argNodes[1], ws, wb, memo, mutate);
+      const sumVals = argNodes[2] ? getVals(argNodes[2]) : critVals;
+      let sum = 0;
+      for(let r = 0; r < critVals.length; r++){
+        if(_cbCriteriaMatch(critVals[r], criteria)) sum += _cbNum(sumVals[r]);
+      }
+      return sum;
+    }
+    case 'SUMIFS': {
+      const sumVals = getVals(argNodes[0]);
+      const rangeArrays = [], criteriaVals = [];
+      for(let i = 1; i < argNodes.length; i += 2){
+        rangeArrays.push(getVals(argNodes[i]));
+        criteriaVals.push(_cbEvalNode(argNodes[i+1], ws, wb, memo, mutate));
+      }
+      let sum = 0;
+      for(let r = 0; r < sumVals.length; r++){
+        let ok = true;
+        for(let k = 0; k < rangeArrays.length; k++){
+          if(!_cbCriteriaMatch(rangeArrays[k][r], criteriaVals[k])){ ok = false; break; }
+        }
+        if(ok) sum += _cbNum(sumVals[r]);
+      }
+      return sum;
+    }
+    case 'AVERAGE': {
+      const nums = getVals(argNodes[0]).filter(v => v !== null && v !== undefined && v !== '').map(_cbNum);
+      if(!nums.length) throw new Error('#DIV/0!');
+      return nums.reduce((s,v) => s + v, 0) / nums.length;
+    }
+    case 'AVERAGEIF': {
+      const critVals = getVals(argNodes[0]);
+      const criteria = _cbEvalNode(argNodes[1], ws, wb, memo, mutate);
+      const avgVals = argNodes[2] ? getVals(argNodes[2]) : critVals;
+      let sum = 0, cnt = 0;
+      for(let r = 0; r < critVals.length; r++){
+        if(_cbCriteriaMatch(critVals[r], criteria)){
+          const raw = avgVals[r];
+          if(raw !== null && raw !== undefined && raw !== ''){ sum += _cbNum(raw); cnt++; }
+        }
+      }
+      if(!cnt) throw new Error('#DIV/0!');
+      return sum / cnt;
+    }
+    case 'IFERROR':
+      try { return _cbEvalNode(argNodes[0], ws, wb, memo, mutate); }
+      catch(e){ return _cbEvalNode(argNodes[1], ws, wb, memo, mutate); }
+    default:
+      throw new Error('Unsupported function in Combined Dashboard formula: ' + name);
+  }
+}
+
+// Resolve (and, only when `mutate` is true, freeze) one worksheet cell,
+// memoized per-sheet so cells referenced multiple times are only evaluated
+// once and forward/backward references both work. `mutate=true` is used
+// only for the sheet actively being frozen (Combined Dashboard); cells on
+// any other sheet reached via a cross-sheet reference (e.g. Combined
+// Summary of Deal's IF()-based helper columns) are evaluated read-only —
+// their live formulas are left completely untouched.
+function _cbResolveCell(ws, rowNum, colNum, wb, memo, mutate){
+  const key = (ws.name || '') + '!' + rowNum + ',' + colNum;
+  if(memo.has(key)) return memo.get(key);
+  const cell = ws.getCell(rowNum, colNum);
+  const raw = cell.value;
+  if(_cbIsFormulaObj(raw)){
+    memo.set(key, 0); // guard against runaway recursion on an unexpected circular ref
+    let val;
+    try {
+      val = _cbEvalNode(_cbParseFormula(raw.formula), ws, wb, memo, mutate);
+    } catch(e){
+      console.error('Combined Dashboard: failed to compute formula, defaulting to 0 →', raw.formula, e);
+      val = 0;
+    }
+    if(typeof val === 'boolean') val = val ? 1 : 0;
+    if(typeof val === 'number' && !isFinite(val)) val = 0;
+    if(mutate) cell.value = val; // freeze: replace the live formula with its calculated result
+    memo.set(key, val);
+    return val;
+  }
+  const plain = _cbRawCellValue(cell);
+  memo.set(key, plain);
+  return plain;
+}
+
+// Public entry point: convert EVERY formula cell in `ws` into its
+// calculated static value. Only ever call this on the Combined Dashboard
+// worksheet — never on 'Combined Summary of Deal', 'Dealer-wise Per Car
+// Avg', 'Model-wise Per Car Avg', 'Dealer Model Breakup', or 'Dealer
+// Location Breakup', which must keep their live formulas untouched. (Those
+// other sheets ARE read from — e.g. Combined Summary of Deal's IF()-based
+// helper columns — but always read-only; see `mutate` in _cbResolveCell.)
+function _cbFreezeDashboardFormulas(ws, wb){
+  const memo = new Map();
+  const maxRow = ws.rowCount;
+  const maxCol = ws.columnCount;
+  for(let r = 1; r <= maxRow; r++){
+    for(let c = 1; c <= maxCol; c++){
+      const cell = ws.getCell(r, c);
+      if(_cbIsFormulaObj(cell.value)) _cbResolveCell(ws, r, c, wb, memo, true);
+    }
+  }
 }
 
 // Entry point: current dealership (respects current filters)
@@ -17186,6 +17617,9 @@ async function exportAuditDashboardPerDealerZip(){
       while(usedFileNames.has(candidate.toLowerCase())){ candidate = fname + '_' + dup + '.xlsx'; dup++; }
       usedFileNames.add(candidate.toLowerCase());
 
+      // Same fix as _adDownload() — force Excel to fully recalculate on
+      // open so this Dashboard sheet's Count/Avg formulas aren't blank.
+      wb.calcProperties.fullCalcOnLoad = true;
       const buf = await wb.xlsx.writeBuffer();
       zip.file(candidate, buf);
       count++;
@@ -17643,6 +18077,12 @@ async function buildCombinedReport(dealerNames){
     // 2) Combined Dashboard
     const wsDash = wb.addWorksheet('Combined Dashboard', {views:[{showGridLines:false}], pageSetup:{paperSize:9, orientation:'landscape', fitToPage:true, fitToWidth:1, fitToHeight:0}});
     _cbBuildDashboard(wsDash, dealerNames, totalRows, rowsByDealer);
+    // Per the Excel-download requirement: ONLY the Combined Dashboard sheet
+    // is exported with static calculated values — Count/Average/Total/
+    // Variance/%/KPI cells all become plain numbers, no formulas. Layout,
+    // merged cells, colors, borders and number formats are untouched since
+    // only `.value` is overwritten. No other sheet is touched by this call.
+    _cbFreezeDashboardFormulas(wsDash, wb);
 
     // 3) Dealer-wise Per Car Avg
     const wsDealerAvg = wb.addWorksheet('Dealer-wise Per Car Avg', {views:[{showGridLines:false}]});
@@ -17698,6 +18138,20 @@ function _cbBuildSummaryOfDeal(ws, dealerNames, rowsByDealer){
   const H = actualHeaders;
   const v = (r,n) => _drLookup(H, r, n);
 
+  // ── Column layout (v73 — Refund (₹) + Net Variance (₹) moved to sit
+  // right after Variance (₹), matching the single-dealer report's layout) ──
+  // A: Dealership          B: Customer Name       C: Model             D: Chassis Number
+  // E: Actual Deal Value   F: Total Payment Recpt G: Variance          H: Refund (₹)        [NEW pos]
+  // I: Net Variance (₹)    [NEW pos]               J: Reconciliation Status
+  // K: Payment Not Verified  L: Payment Verified   M: Remarks
+  // N: Ex-Showroom  O: Accessories  P: Insurance  Q: Registration  R: Extended Warranty  S: RSA
+  // T: Fast Tag  U: TCS  V: Green Tax  W: HP Charges  X: Other Charges
+  // Y: TOTAL DISC GIVEN    Z: Discount above scheme
+  // AA: Finance Type  AB: Insurance Type  AC: Deal Type
+  // AD: Auditors Remarks  AE: Review status  AF: Booking Number
+  // AG: Trade-In Receipt  AH: Receipt Mismatch  AI: Location
+  // AJ: Month  AK: In-Scope Deal Value  AL-AT: Is-flags (Insurance, Finance
+  // In-house, Accessories, RSA, EW, Matched, Minor, Excess, Short)
   // ── Column widths ──
   ws.columns = [
     {width:18}, // A Dealership
@@ -17707,62 +18161,66 @@ function _cbBuildSummaryOfDeal(ws, dealerNames, rowsByDealer){
     {width:15}, // E Actual Deal Value
     {width:15}, // F Total Payment Receipts
     {width:13}, // G Variance
-    {width:18}, // H Reconciliation Status
-    {width:15}, // I Payment Not Verified
-    {width:15}, // J Payment Verified
-    {width:20}, // K Remarks
-    {width:13}, // L Ex-Showroom
-    {width:13}, // M Accessories
-    {width:13}, // N Insurance
-    {width:13}, // O Registration
-    {width:13}, // P Extended Warranty
-    {width:13}, // Q RSA
-    {width:11}, // R Fast Tag
-    {width:11}, // S TCS
-    {width:11}, // T Green Tax
-    {width:12}, // U HP Charges
-    {width:13}, // V Other Charges
-    {width:15}, // W TOTAL DISC GIVEN
-    {width:18}, // X Discount above scheme
-    {width:13}, // Y Finance Type
-    {width:14}, // Z Insurance Type
-    {width:13}, // AA Deal Type
-    {width:24}, // AB Auditors Remarks
-    {width:14}, // AC Review status
-    {width:14}, // AD Booking Number
-    {width:14}, // AE Trade-In Receipt
-    {width:12}, // AF Receipt Mismatch
-    {width:18}, // AG Location (NEW in v70)
-    {width:7},  // AH Month (numeric, shifted from AG)
-    {width:16}, // AI In-Scope Deal Value (shifted from AH)
-    {width:9},  // AJ Is Insurance
-    {width:12}, // AK Is Finance In-house
-    {width:11}, // AL Is Accessories
-    {width:8},  // AM Is RSA
-    {width:8},  // AN Is EW
-    {width:10}, // AO Is Matched
-    {width:8},  // AP Is Minor
-    {width:9},  // AQ Is Excess
-    {width:8},  // AR Is Short
-    {width:14}, // AS Refund (₹)
+    {width:14}, // H Refund (₹)                (NEW pos)
+    {width:14}, // I Net Variance (₹)           (NEW pos = Variance − Refund)
+    {width:18}, // J Reconciliation Status
+    {width:15}, // K Payment Not Verified
+    {width:15}, // L Payment Verified
+    {width:20}, // M Remarks
+    {width:13}, // N Ex-Showroom
+    {width:13}, // O Accessories
+    {width:13}, // P Insurance
+    {width:13}, // Q Registration
+    {width:13}, // R Extended Warranty
+    {width:13}, // S RSA
+    {width:11}, // T Fast Tag
+    {width:11}, // U TCS
+    {width:11}, // V Green Tax
+    {width:12}, // W HP Charges
+    {width:13}, // X Other Charges
+    {width:15}, // Y TOTAL DISC GIVEN
+    {width:18}, // Z Discount above scheme
+    {width:13}, // AA Finance Type
+    {width:14}, // AB Insurance Type
+    {width:13}, // AC Deal Type
+    {width:24}, // AD Auditors Remarks
+    {width:14}, // AE Review status
+    {width:14}, // AF Booking Number
+    {width:14}, // AG Trade-In Receipt
+    {width:12}, // AH Receipt Mismatch
+    {width:18}, // AI Location
+    {width:7},  // AJ Month
+    {width:16}, // AK In-Scope Deal Value
+    {width:9},  // AL Is Insurance
+    {width:12}, // AM Is Finance In-house
+    {width:11}, // AN Is Accessories
+    {width:8},  // AO Is RSA
+    {width:8},  // AP Is EW
+    {width:10}, // AQ Is Matched
+    {width:8},  // AR Is Minor
+    {width:9},  // AS Is Excess
+    {width:8},  // AT Is Short
   ];
+
 
   // ── Header row ──
   const headers = [
     'Dealership','Customer Name','Model','Chassis Number',
-    'Actual Deal Value (₹)','Total Payment Receipts (₹)','Variance (₹)','Reconciliation Status',
+    'Actual Deal Value (₹)','Total Payment Receipts (₹)','Variance (₹)',
+    'Refund (₹)',                             // H (NEW pos) — money refunded to customer
+    'Net Variance (₹)',                       // I (NEW pos) — Variance (₹) − Refund (₹)
+    'Reconciliation Status',
     'Payment Not Verified (₹)','Payment Verified (₹)','Remarks',
     'Ex-Showroom (₹)','Accessories (₹)',
-    'Insurance (₹)',                          // N
+    'Insurance (₹)',
     'Registration (₹)','Extended Warranty (₹)','RSA (₹)',
     'Fast Tag','TCS','Green Tax','HP Charges','Other Charges',
     '➤ TOTAL DISC GIVEN','Discount above scheme',
     'Finance Type','Insurance Type','Deal Type','Auditors Remarks','Review status','Booking Number',
-    'Trade-In Receipt (₹)',                   // AE
-    'Receipt Mismatch',                       // AF
-    'Location',                               // AG (NEW in v70)
-    'Month','In-Scope Deal Value','Is Insurance','Is Finance In-house','Is Accessories','Is RSA','Is EW','Is Matched','Is Minor','Is Excess','Is Short',
-    'Refund (₹)'                              // AS (NEW) — money refunded to customer
+    'Trade-In Receipt (₹)',
+    'Receipt Mismatch',
+    'Location',
+    'Month','In-Scope Deal Value','Is Insurance','Is Finance In-house','Is Accessories','Is RSA','Is EW','Is Matched','Is Minor','Is Excess','Is Short'
   ];
   headers.forEach((h, i) => {
     const c = ws.getCell(1, i+1);
@@ -17866,8 +18324,12 @@ function _cbBuildSummaryOfDeal(ws, dealerNames, rowsByDealer){
       const discAbove = _computeDiscAboveScheme(H, r, discAboveCols);
       // Zebra striping per overall row (not per dealer) so a long list reads cleanly
       const zebra = (outRow % 2 === 0) ? S.bgZebra : S.bgWhite;
-      // 33 cells in display order (1 dealership + 31 main + 1 month)
-      // Helpers AH-AQ added below as formulas.
+      // Net Variance = Variance (₹) − Refund (₹). Refund is 0 when blank/null
+      // (already guaranteed by `refund` computed above).
+      const netVariance = variance - refund;
+      // 35 cells in display order (Refund + Net Variance now sit right after
+      // Variance, columns H/I, matching the single-dealer report layout).
+      // Helpers AL-AT added below as formulas.
       const cells = [
         [1,  dealerName, 'left',  null],
         [2,  custName,   'left',  null],
@@ -17876,38 +18338,41 @@ function _cbBuildSummaryOfDeal(ws, dealerNames, rowsByDealer){
         [5,  dealVal,    'right', '#,##0'],
         [6,  totRcpt,    'right', '#,##0'],
         [7,  variance,   'right', '#,##0'],
-        [8,  reconStatus,'left',  null],
-        [9,  payNotVer,  'right', '#,##0'],
-        [10, payVer,     'right', '#,##0'],
-        [11, remark,     'left',  null],
-        [12, exShow,     'right', '#,##0'],
-        [13, acc,        'right', '#,##0'],
-        [14, ins,        'right', '#,##0'],     // N: Insurance (NEW)
-        [15, reg,        'right', '#,##0'],     // O: Registration (shifted from N)
-        [16, ew,         'right', '#,##0'],     // P: EW
-        [17, rsa,        'right', '#,##0'],     // Q: RSA
-        [18, ft,         'right', '#,##0'],     // R: Fast Tag
-        [19, tcs,        'right', '#,##0'],     // S: TCS
-        [20, gt,         'right', '#,##0'],     // T: Green Tax
-        [21, hp,         'right', '#,##0'],     // U: HP Charges
-        [22, other,      'right', '#,##0'],     // V: Other Charges
-        [23, totalDisc,  'right', '#,##0'],     // W: ➤ TOTAL DISC GIVEN
-        [24, discAbove,  'right', '#,##0'],     // X: Discount above scheme
-        [25, finType,    'left',  null],        // Y: Finance Type
-        [26, insType,    'left',  null],        // Z: Insurance Type
-        [27, dealType,   'left',  null],        // AA: Deal Type
-        [28, auditRem,   'left',  null],        // AB: Auditors Remarks
-        [29, sentBack,   'left',  null],        // AC: Review status
-        [30, bn,         'left',  null],        // AD: Booking Number
-        [31, tradeInRcpt,'right', '#,##0'],     // AE: Trade-In Receipt
-        [32, mismatch,   'left',  null],        // AF: Receipt Mismatch
-        [33, location,   'left',  null],        // AG: Location (NEW in v70)
-        [34, month || '', 'right', '0'],        // AH: Month helper (shifted from AG)
+        [8,  refund,     'right', '#,##0'],     // H: Refund (₹) (NEW pos)
+        [9,  netVariance,'right', '#,##0'],     // I: Net Variance (₹) (NEW pos)
+        [10, reconStatus,'left',  null],        // J: Reconciliation Status
+        [11, payNotVer,  'right', '#,##0'],     // K: Payment Not Verified
+        [12, payVer,     'right', '#,##0'],     // L: Payment Verified
+        [13, remark,     'left',  null],        // M: Remarks
+        [14, exShow,     'right', '#,##0'],     // N: Ex-Showroom
+        [15, acc,        'right', '#,##0'],     // O: Accessories
+        [16, ins,        'right', '#,##0'],     // P: Insurance
+        [17, reg,        'right', '#,##0'],     // Q: Registration
+        [18, ew,         'right', '#,##0'],     // R: EW
+        [19, rsa,        'right', '#,##0'],     // S: RSA
+        [20, ft,         'right', '#,##0'],     // T: Fast Tag
+        [21, tcs,        'right', '#,##0'],     // U: TCS
+        [22, gt,         'right', '#,##0'],     // V: Green Tax
+        [23, hp,         'right', '#,##0'],     // W: HP Charges
+        [24, other,      'right', '#,##0'],     // X: Other Charges
+        [25, totalDisc,  'right', '#,##0'],     // Y: ➤ TOTAL DISC GIVEN
+        [26, discAbove,  'right', '#,##0'],     // Z: Discount above scheme
+        [27, finType,    'left',  null],        // AA: Finance Type
+        [28, insType,    'left',  null],        // AB: Insurance Type
+        [29, dealType,   'left',  null],        // AC: Deal Type
+        [30, auditRem,   'left',  null],        // AD: Auditors Remarks
+        [31, sentBack,   'left',  null],        // AE: Review status
+        [32, bn,         'left',  null],        // AF: Booking Number
+        [33, tradeInRcpt,'right', '#,##0'],     // AG: Trade-In Receipt
+        [34, mismatch,   'left',  null],        // AH: Receipt Mismatch
+        [35, location,   'left',  null],        // AI: Location
+        [36, month || '', 'right', '0'],        // AJ: Month helper
       ];
       cells.forEach(([col, val, align, fmt]) => {
         const c = ws.getCell(outRow, col);
         c.value = val;
         let color = S.textDark, bold = false;
+        // Variance (G = 7) — colour-code by sign
         if(col === 7){
           if(variance === 0) color = S.greenText;
           else if(Math.abs(variance) <= 1000) color = S.blueText;
@@ -17915,65 +18380,76 @@ function _cbBuildSummaryOfDeal(ws, dealerNames, rowsByDealer){
           else color = S.redText;
           bold = true;
         }
-        // Remarks column (K = 11) — color per the 5-option vocabulary
-        if(col === 11){
+        // Refund (₹) (H = 8, NEW pos) — red bold if a refund was paid out
+        if(col === 8){
+          color = refund > 0 ? S.redText : S.textDark;
+          bold = refund > 0;
+        }
+        // Net Variance (₹) (I = 9, NEW pos) — colour-code by sign, same convention as Variance
+        if(col === 9){
+          if(netVariance === 0) color = S.greenText;
+          else if(Math.abs(netVariance) <= 1000) color = S.blueText;
+          else if(netVariance > 0) color = S.amberText;
+          else color = S.redText;
+          bold = true;
+        }
+        // Remarks column (M = 13) — color per the 5-option vocabulary
+        if(col === 13){
           if(remark === 'Verified from Bank' || remark === 'Verified from Ledger' || remark === 'Verified from NDC') color = S.greenText;
           else if(remark === 'Verification in Process') color = S.blueText;
           else if(remark === 'Documents Incomplete')    color = S.redText;
         }
-        // Receipt Mismatch (AF = 32) — red bold if "Yes"
-        if(col === 32){
+        // Receipt Mismatch (AH = 34) — red bold if "Yes"
+        if(col === 34){
           if(mismatch === 'Yes'){ color = S.redText; bold = true; }
           else { color = S.greenText; }
         }
         _adStyle(c, {fill:zebra, color:color, bold:bold, size:9, align:{h:align, v:'center', indent:1, wrap:false}, fmt:fmt});
       });
-      // ── Helper columns (AI-AR = 35-44) — formula-driven ──
-      // Reference letters reflect the v70 Combined layout (Location inserted
-      // at AG pushed all helpers down by 1):
-      //   AA = Deal Type        Z = Insurance Type    Y = Finance Type
-      //   P = EW                Q = RSA               L = Accessories
-      //   H = Reconciliation Status (unchanged)
+      // ── Helper columns (AL-AT = 38-46) — formula-driven ──
+      // Reference letters reflect the v73 Combined layout (Refund + Net
+      // Variance inserted at H/I pushed everything from Reconciliation
+      // Status onward +2 columns):
+      //   AC = Deal Type        AB = Insurance Type    AA = Finance Type
+      //   R = EW                 S = RSA                 O = Accessories
+      //   J = Reconciliation Status
       //   E = Actual Deal Value (unchanged)
       const fHelper = (col, formula, fmt) => {
         const c = ws.getCell(outRow, col);
         c.value = {formula: formula};
         _adStyle(c, {fill:zebra, color:S.textFaint, size:9, align:{h:'right', v:'center'}, fmt:fmt});
       };
-      // AI (35): In-Scope Deal Value = IF(AA="In-scope", E, 0)
-      fHelper(35, `IF(AA${outRow}="In-scope",E${outRow},0)`, '#,##0');
-      // AJ (36): Is Insurance = IF(Z="Inhouse",1,0)
-      fHelper(36, `IF(Z${outRow}="Inhouse",1,0)`, '0');
-      // AK (37): Is Finance In-house = IF(Y="In House",1,0)
-      fHelper(37, `IF(Y${outRow}="In House",1,0)`, '0');
-      // AL (38): Is Accessories = IF(M>1,1,0)
-      fHelper(38, `IF(M${outRow}>1,1,0)`, '0');
-      // AM (39): Is RSA = IF(Q>1,1,0)
-      fHelper(39, `IF(Q${outRow}>1,1,0)`, '0');
-      // AN (40): Is EW = IF(P>1,1,0)
-      fHelper(40, `IF(P${outRow}>1,1,0)`, '0');
-      // AO (41): Is Matched = IF(H="Matched",1,0)
-      fHelper(41, `IF(H${outRow}="Matched",1,0)`, '0');
-      // AP (42): Is Minor
-      fHelper(42, `IF(H${outRow}="Minor Variance",1,0)`, '0');
-      // AQ (43): Is Excess
-      fHelper(43, `IF(H${outRow}="Excess Received",1,0)`, '0');
-      // AR (44): Is Short
-      fHelper(44, `IF(H${outRow}="Short Received",1,0)`, '0');
-      // AS (45): Refund (₹) — already deducted from Payment Not Verified (col I)
-      ws.getCell(outRow, 45).value = refund;
-      _adStyle(ws.getCell(outRow, 45), {fill: (outRow%2===0)?S.bgZebra:S.bgWhite, color: refund > 0 ? S.redText : S.textDark, bold: refund > 0, size:9, align:{h:'right', v:'center', indent:1}, fmt:'#,##0'});
+      // AK (37): In-Scope Deal Value = IF(AC="In-scope", E, 0)
+      fHelper(37, `IF(AC${outRow}="In-scope",E${outRow},0)`, '#,##0');
+      // AL (38): Is Insurance = IF(AB="Inhouse",1,0)
+      fHelper(38, `IF(AB${outRow}="Inhouse",1,0)`, '0');
+      // AM (39): Is Finance In-house = IF(AA="In House",1,0)
+      fHelper(39, `IF(AA${outRow}="In House",1,0)`, '0');
+      // AN (40): Is Accessories = IF(O>1,1,0)
+      fHelper(40, `IF(O${outRow}>1,1,0)`, '0');
+      // AO (41): Is RSA = IF(S>1,1,0)
+      fHelper(41, `IF(S${outRow}>1,1,0)`, '0');
+      // AP (42): Is EW = IF(R>1,1,0)
+      fHelper(42, `IF(R${outRow}>1,1,0)`, '0');
+      // AQ (43): Is Matched = IF(J="Matched",1,0)
+      fHelper(43, `IF(J${outRow}="Matched",1,0)`, '0');
+      // AR (44): Is Minor
+      fHelper(44, `IF(J${outRow}="Minor Variance",1,0)`, '0');
+      // AS (45): Is Excess
+      fHelper(45, `IF(J${outRow}="Excess Received",1,0)`, '0');
+      // AT (46): Is Short
+      fHelper(46, `IF(J${outRow}="Short Received",1,0)`, '0');
       outRow++;
     });
   });
 
-  // Auto-filter on all 45 columns (1 dealership + 32 main + 11 helpers + Refund)
-  ws.autoFilter = {from:{row:1, column:1}, to:{row:1, column:45}};
+  // Auto-filter on all 46 columns
+  ws.autoFilter = {from:{row:1, column:1}, to:{row:1, column:46}};
 
-  // ── Data-validation drop-down on Remarks column (K) ──
-  // Same 9-option list as the single-dealer Summary of Deal sheet. Note
-  // the combined sheet uses column K (11) for Remarks because column A is
-  // Dealership — everything else shifts +1 from the single-dealer layout.
+  // ── Data-validation drop-down on Remarks column (M) ──
+  // Same 9-option list as the single-dealer Summary of Deal sheet. Note the
+  // combined sheet now uses column M (13) for Remarks — Refund + Net
+  // Variance pushed it +2 columns from its earlier position (K).
   const _cbRemarkOptions = [
     'Verified from Bank',
     'Verified from Ledger',
@@ -17983,7 +18459,7 @@ function _cbBuildSummaryOfDeal(ws, dealerNames, rowsByDealer){
   ];
   const _cbRemarkList = '"' + _cbRemarkOptions.join(',') + '"';
   for(let rr = 2; rr < outRow; rr++){
-    ws.getCell(rr, 11).dataValidation = {
+    ws.getCell(rr, 13).dataValidation = {
       type: 'list',
       allowBlank: true,
       formulae: [_cbRemarkList],
@@ -18049,10 +18525,10 @@ function _cbBuildDashboard(ws, dealerNames, totalRows, rowsByDealer){
     {labelCell:'B5', valueCell:'C5', label:'📅 Audit Date',     value: new Date(),                              fmt:'yyyy-mm-dd'},
     {labelCell:'D5', valueCell:'E5', label:'🏢 Dealerships',     value: nD,                                       fmt:'0'},
     {labelCell:'F5', valueCell:'G5', label:'🚗 Total Deals',     value: {formula:`COUNTA(${SOD}!$A$2:$A$100000)`}, fmt:'0'},
-    {labelCell:'H5', valueCell:'I5', label:'⚠ Variances',        value: {formula:`COUNTA(${SOD}!$A$2:$A$100000)-COUNTIF(${SOD}!$H$2:$H$100000,"Matched")`}, fmt:'0'},
+    {labelCell:'H5', valueCell:'I5', label:'⚠ Variances',        value: {formula:`COUNTA(${SOD}!$A$2:$A$100000)-COUNTIF(${SOD}!$J$2:$J$100000,"Matched")`}, fmt:'0'},
     {labelCell:'J5', valueCell:'K5', label:'💰 Total Deal Value', value: {formula:`SUM(${SOD}!$E$2:$E$100000)`},   fmt:'#,##0'},
     {labelCell:'L5', valueCell:'M5', label:'💵 Receipts',         value: {formula:`SUM(${SOD}!$F$2:$F$100000)`},   fmt:'#,##0'},
-    {labelCell:'N5', valueCell:'O5', label:'📊 Net Var',          value: {formula:`SUM(${SOD}!$G$2:$G$100000)`},   fmt:'#,##0'},
+    {labelCell:'N5', valueCell:'O5', label:'📊 Net Variance',     value: {formula:`SUM(${SOD}!$I$2:$I$100000)`},   fmt:'#,##0'},
   ];
   headlineCells.forEach(c => {
     const labCell = ws.getCell(c.labelCell);
@@ -18130,11 +18606,11 @@ function _cbBuildDashboard(ws, dealerNames, totalRows, rowsByDealer){
       try { if(card.vvValRng) ws.mergeCells(card.vvValRng); } catch(e){}
       if(isCombined){
         ws.getCell(card.dvCell).value = {formula:`SUM(${SOD}!$E$2:$E$100000)`};
-        ws.getCell(card.vvCell).value = {formula:`SUM(${SOD}!$G$2:$G$100000)`};
+        ws.getCell(card.vvCell).value = {formula:`SUM(${SOD}!$I$2:$I$100000)`};
       } else {
         const escD = card.dealer.replace(/"/g,'""');
         ws.getCell(card.dvCell).value = {formula:`SUMIF(${SOD}!$A$2:$A$100000,"${escD}",${SOD}!$E$2:$E$100000)`};
-        ws.getCell(card.vvCell).value = {formula:`SUMIF(${SOD}!$A$2:$A$100000,"${escD}",${SOD}!$G$2:$G$100000)`};
+        ws.getCell(card.vvCell).value = {formula:`SUMIF(${SOD}!$A$2:$A$100000,"${escD}",${SOD}!$I$2:$I$100000)`};
       }
       _adStyle(ws.getCell(card.dvCell), {fill:S.bgWhite, color:S.navy, bold:true, size:13, align:{h:'center', v:'center'}, fmt:'#,##0'});
       _adStyle(ws.getCell(card.vvCell), {fill:S.bgWhite, color:S.redText, bold:true, size:13, align:{h:'center', v:'center'}, fmt:'#,##0'});
@@ -18209,6 +18685,12 @@ function _cbBuildDashboard(ws, dealerNames, totalRows, rowsByDealer){
           // Generic: dealer val / combined total, where total = COUNTIF/SUMIF on full sheet
           ws.getCell(r, cc+1).value = {formula: rowDef.dealerPctFormula(escD)};
           _adStyle(ws.getCell(r, cc+1), {fill:zebra, color:'6B7280', size:10, align:{h:'right', v:'center', indent:1}, fmt:'0.00%'});
+        } else if(rowDef.pctMode === 'amount'){
+          // Second column holds an actual ₹ amount (e.g. variance sum), not
+          // a percentage — used by tables where the "second value per
+          // dealer" is a currency figure rather than a share-of-total.
+          ws.getCell(r, cc+1).value = {formula: rowDef.dealerPctFormula(escD)};
+          _adStyle(ws.getCell(r, cc+1), {fill:zebra, color: rowDef.color || '000000', bold: rowDef.boldValue || false, size:10, align:{h:'right', v:'center', indent:1}, fmt: rowDef.pctFmt || '#,##0'});
         } else if(rowDef.pctMode === 'dash'){
           ws.getCell(r, cc+1).value = '—';
           _adStyle(ws.getCell(r, cc+1), {fill:zebra, color:'9CA3AF', size:10, align:{h:'center', v:'center'}});
@@ -18221,6 +18703,9 @@ function _cbBuildDashboard(ws, dealerNames, totalRows, rowsByDealer){
       if(rowDef.pctMode === 'fraction'){
         ws.getCell(r, cc+1).value = {formula: rowDef.combinedPctFormula};
         _adStyle(ws.getCell(r, cc+1), {fill:zebra, color:'6B7280', size:10, align:{h:'right', v:'center', indent:1}, fmt:'0.00%'});
+      } else if(rowDef.pctMode === 'amount'){
+        ws.getCell(r, cc+1).value = {formula: rowDef.combinedPctFormula};
+        _adStyle(ws.getCell(r, cc+1), {fill:zebra, color: rowDef.color || '000000', bold:true, size:10, align:{h:'right', v:'center', indent:1}, fmt: rowDef.pctFmt || '#,##0'});
       } else if(rowDef.pctMode === 'dash'){
         ws.getCell(r, cc+1).value = '—';
         _adStyle(ws.getCell(r, cc+1), {fill:zebra, color:'9CA3AF', size:10, align:{h:'center', v:'center'}});
@@ -18245,15 +18730,30 @@ function _cbBuildDashboard(ws, dealerNames, totalRows, rowsByDealer){
         const colL = colLetter(cc);
         ws.getCell(r, cc).value = {formula:`SUM(${colL}${totalRowStart}:${colL}${r-1})`};
         _adStyle(ws.getCell(r, cc), {fill:S.navy, color:'FFFFFF', bold:true, size:10, align:{h:'right', v:'center', indent:1}, fmt: opts.totalFmt || '#,##0'});
-        ws.getCell(r, cc+1).value = 1;
-        _adStyle(ws.getCell(r, cc+1), {fill:S.navy, color:'FFFFFF', bold:true, size:10, align:{h:'right', v:'center', indent:1}, fmt:'0.00%'});
+        if(opts.totalSecondColSum){
+          // Second column is a ₹ amount (or other summable figure), not a
+          // percentage — sum it the same way as the first column instead
+          // of writing a hardcoded 100%.
+          const colL2 = colLetter(cc+1);
+          ws.getCell(r, cc+1).value = {formula:`SUM(${colL2}${totalRowStart}:${colL2}${r-1})`};
+          _adStyle(ws.getCell(r, cc+1), {fill:S.navy, color:'FFFFFF', bold:true, size:10, align:{h:'right', v:'center', indent:1}, fmt: opts.totalSecondFmt || opts.totalFmt || '#,##0'});
+        } else {
+          ws.getCell(r, cc+1).value = 1;
+          _adStyle(ws.getCell(r, cc+1), {fill:S.navy, color:'FFFFFF', bold:true, size:10, align:{h:'right', v:'center', indent:1}, fmt:'0.00%'});
+        }
         cc += 2;
       });
       const colL = colLetter(cc);
       ws.getCell(r, cc).value = {formula:`SUM(${colL}${totalRowStart}:${colL}${r-1})`};
       _adStyle(ws.getCell(r, cc), {fill:S.navy, color:'FFFFFF', bold:true, size:10, align:{h:'right', v:'center', indent:1}, fmt: opts.totalFmt || '#,##0'});
-      ws.getCell(r, cc+1).value = 1;
-      _adStyle(ws.getCell(r, cc+1), {fill:S.navy, color:'FFFFFF', bold:true, size:10, align:{h:'right', v:'center', indent:1}, fmt:'0.00%'});
+      if(opts.totalSecondColSum){
+        const colL2 = colLetter(cc+1);
+        ws.getCell(r, cc+1).value = {formula:`SUM(${colL2}${totalRowStart}:${colL2}${r-1})`};
+        _adStyle(ws.getCell(r, cc+1), {fill:S.navy, color:'FFFFFF', bold:true, size:10, align:{h:'right', v:'center', indent:1}, fmt: opts.totalSecondFmt || opts.totalFmt || '#,##0'});
+      } else {
+        ws.getCell(r, cc+1).value = 1;
+        _adStyle(ws.getCell(r, cc+1), {fill:S.navy, color:'FFFFFF', bold:true, size:10, align:{h:'right', v:'center', indent:1}, fmt:'0.00%'});
+      }
       ws.getRow(r).height = 21.75;
       r++;
     }
@@ -18283,18 +18783,24 @@ function _cbBuildDashboard(ws, dealerNames, totalRows, rowsByDealer){
       {label:'💵  Total Payment Receipts (₹)',   dealerFormula:e=>`SUMIF(${SOD}!$A$2:$A$100000,"${e}",${SOD}!$F$2:$F$100000)`,
        dealerPctFormula:e=>`IFERROR(SUMIF(${SOD}!$A$2:$A$100000,"${e}",${SOD}!$F$2:$F$100000)/SUM(${SOD}!$F$2:$F$100000),0)`,
        combinedFormula:`SUM(${SOD}!$F$2:$F$100000)`, combinedPctFormula:'1', pctMode:'fraction', fmt:'#,##0'},
-      {label:'📊  Net Variance (₹)',              dealerFormula:e=>`SUMIF(${SOD}!$A$2:$A$100000,"${e}",${SOD}!$G$2:$G$100000)`,
+      {label:'📊  Total Variance — Gross (₹)',     dealerFormula:e=>`SUMIF(${SOD}!$A$2:$A$100000,"${e}",${SOD}!$G$2:$G$100000)`,
        dealerPctFormula:e=>`IFERROR(SUMIF(${SOD}!$A$2:$A$100000,"${e}",${SOD}!$G$2:$G$100000)/SUM(${SOD}!$G$2:$G$100000),0)`,
        combinedFormula:`SUM(${SOD}!$G$2:$G$100000)`, combinedPctFormula:'1', pctMode:'fraction', fmt:'#,##0'},
+      {label:'💸  Total Refund (₹)',               dealerFormula:e=>`SUMIF(${SOD}!$A$2:$A$100000,"${e}",${SOD}!$H$2:$H$100000)`,
+       dealerPctFormula:e=>`IFERROR(SUMIF(${SOD}!$A$2:$A$100000,"${e}",${SOD}!$H$2:$H$100000)/SUM(${SOD}!$H$2:$H$100000),0)`,
+       combinedFormula:`SUM(${SOD}!$H$2:$H$100000)`, combinedPctFormula:'1', pctMode:'fraction', fmt:'#,##0'},
+      {label:'📊  Net Variance — After Refund (₹)', dealerFormula:e=>`SUMIF(${SOD}!$A$2:$A$100000,"${e}",${SOD}!$I$2:$I$100000)`,
+       dealerPctFormula:e=>`IFERROR(SUMIF(${SOD}!$A$2:$A$100000,"${e}",${SOD}!$I$2:$I$100000)/SUM(${SOD}!$I$2:$I$100000),0)`,
+       combinedFormula:`SUM(${SOD}!$I$2:$I$100000)`, combinedPctFormula:'1', pctMode:'fraction', fmt:'#,##0'},
       {label:'🚙  Avg Deal Value per Car (₹)',   dealerFormula:e=>`IFERROR(AVERAGEIF(${SOD}!$A$2:$A$100000,"${e}",${SOD}!$E$2:$E$100000),0)`,
        combinedFormula:`IFERROR(AVERAGE(${SOD}!$E$2:$E$100000),0)`, pctMode:'dash', fmt:'#,##0'},
-      {label:'🎯  Avg Disc above Scheme — In-Scope (₹)', dealerFormula:e=>`IFERROR(SUMIFS(${SOD}!$X$2:$X$100000,${SOD}!$A$2:$A$100000,"${e}",${SOD}!$AA$2:$AA$100000,"In-scope")/COUNTIFS(${SOD}!$A$2:$A$100000,"${e}",${SOD}!$AA$2:$AA$100000,"In-scope"),0)`,
-       combinedFormula:`IFERROR(SUMIFS(${SOD}!$X$2:$X$100000,${SOD}!$AA$2:$AA$100000,"In-scope")/COUNTIF(${SOD}!$AA$2:$AA$100000,"In-scope"),0)`, pctMode:'dash', fmt:'#,##0'},
-      {label:'🏷️  Avg Disc above Scheme — Overall (₹)',  dealerFormula:e=>`IFERROR(AVERAGEIF(${SOD}!$A$2:$A$100000,"${e}",${SOD}!$X$2:$X$100000),0)`,
-       combinedFormula:`IFERROR(AVERAGE(${SOD}!$X$2:$X$100000),0)`, pctMode:'dash', fmt:'#,##0'},
-      {label:'💸  Total Disc above Scheme (₹)',  dealerFormula:e=>`SUMIF(${SOD}!$A$2:$A$100000,"${e}",${SOD}!$X$2:$X$100000)`,
-       dealerPctFormula:e=>`IFERROR(SUMIF(${SOD}!$A$2:$A$100000,"${e}",${SOD}!$X$2:$X$100000)/SUM(${SOD}!$X$2:$X$100000),0)`,
-       combinedFormula:`SUM(${SOD}!$X$2:$X$100000)`, combinedPctFormula:'1', pctMode:'fraction', fmt:'#,##0'},
+      {label:'🎯  Avg Disc above Scheme — In-Scope (₹)', dealerFormula:e=>`IFERROR(SUMIFS(${SOD}!$Z$2:$Z$100000,${SOD}!$A$2:$A$100000,"${e}",${SOD}!$AC$2:$AC$100000,"In-scope")/COUNTIFS(${SOD}!$A$2:$A$100000,"${e}",${SOD}!$AC$2:$AC$100000,"In-scope"),0)`,
+       combinedFormula:`IFERROR(SUMIFS(${SOD}!$Z$2:$Z$100000,${SOD}!$AC$2:$AC$100000,"In-scope")/COUNTIF(${SOD}!$AC$2:$AC$100000,"In-scope"),0)`, pctMode:'dash', fmt:'#,##0'},
+      {label:'🏷️  Avg Disc above Scheme — Overall (₹)',  dealerFormula:e=>`IFERROR(AVERAGEIF(${SOD}!$A$2:$A$100000,"${e}",${SOD}!$Z$2:$Z$100000),0)`,
+       combinedFormula:`IFERROR(AVERAGE(${SOD}!$Z$2:$Z$100000),0)`, pctMode:'dash', fmt:'#,##0'},
+      {label:'💸  Total Disc above Scheme (₹)',  dealerFormula:e=>`SUMIF(${SOD}!$A$2:$A$100000,"${e}",${SOD}!$Z$2:$Z$100000)`,
+       dealerPctFormula:e=>`IFERROR(SUMIF(${SOD}!$A$2:$A$100000,"${e}",${SOD}!$Z$2:$Z$100000)/SUM(${SOD}!$Z$2:$Z$100000),0)`,
+       combinedFormula:`SUM(${SOD}!$Z$2:$Z$100000)`, combinedPctFormula:'1', pctMode:'fraction', fmt:'#,##0'},
     ],
     wantsTotal: false
   });
@@ -18319,22 +18825,22 @@ function _cbBuildDashboard(ws, dealerNames, totalRows, rowsByDealer){
       combinedPair: ['Combined', '% Combined']
     },
     rows: [
-      {label:'✅  Matched (Zero Variance)', dealerFormula:countByDealerAndCol('H','Matched'),
-        dealerPctFormula:e=>`IFERROR(COUNTIFS(${SOD}!$A$2:$A$100000,"${e}",${SOD}!$H$2:$H$100000,"Matched")/COUNTIF(${SOD}!$A$2:$A$100000,"${e}"),0)`,
-        combinedFormula:countByCol('H','Matched'),
-        combinedPctFormula:`IFERROR(COUNTIF(${SOD}!$H$2:$H$100000,"Matched")/COUNTA(${SOD}!$A$2:$A$100000),0)`, pctMode:'fraction', fmt:'#,##0', color:S.greenText},
-      {label:'🟡  Minor Variance',         dealerFormula:countByDealerAndCol('H','Minor Variance'),
-        dealerPctFormula:e=>`IFERROR(COUNTIFS(${SOD}!$A$2:$A$100000,"${e}",${SOD}!$H$2:$H$100000,"Minor Variance")/COUNTIF(${SOD}!$A$2:$A$100000,"${e}"),0)`,
-        combinedFormula:countByCol('H','Minor Variance'),
-        combinedPctFormula:`IFERROR(COUNTIF(${SOD}!$H$2:$H$100000,"Minor Variance")/COUNTA(${SOD}!$A$2:$A$100000),0)`, pctMode:'fraction', fmt:'#,##0', color:S.blueText},
-      {label:'🔵  Excess Received',        dealerFormula:countByDealerAndCol('H','Excess Received'),
-        dealerPctFormula:e=>`IFERROR(COUNTIFS(${SOD}!$A$2:$A$100000,"${e}",${SOD}!$H$2:$H$100000,"Excess Received")/COUNTIF(${SOD}!$A$2:$A$100000,"${e}"),0)`,
-        combinedFormula:countByCol('H','Excess Received'),
-        combinedPctFormula:`IFERROR(COUNTIF(${SOD}!$H$2:$H$100000,"Excess Received")/COUNTA(${SOD}!$A$2:$A$100000),0)`, pctMode:'fraction', fmt:'#,##0', color:S.amberText},
-      {label:'🔴  Short Received',         dealerFormula:countByDealerAndCol('H','Short Received'),
-        dealerPctFormula:e=>`IFERROR(COUNTIFS(${SOD}!$A$2:$A$100000,"${e}",${SOD}!$H$2:$H$100000,"Short Received")/COUNTIF(${SOD}!$A$2:$A$100000,"${e}"),0)`,
-        combinedFormula:countByCol('H','Short Received'),
-        combinedPctFormula:`IFERROR(COUNTIF(${SOD}!$H$2:$H$100000,"Short Received")/COUNTA(${SOD}!$A$2:$A$100000),0)`, pctMode:'fraction', fmt:'#,##0', color:S.redText},
+      {label:'✅  Matched (Zero Variance)', dealerFormula:countByDealerAndCol('J','Matched'),
+        dealerPctFormula:e=>`IFERROR(COUNTIFS(${SOD}!$A$2:$A$100000,"${e}",${SOD}!$J$2:$J$100000,"Matched")/COUNTIF(${SOD}!$A$2:$A$100000,"${e}"),0)`,
+        combinedFormula:countByCol('J','Matched'),
+        combinedPctFormula:`IFERROR(COUNTIF(${SOD}!$J$2:$J$100000,"Matched")/COUNTA(${SOD}!$A$2:$A$100000),0)`, pctMode:'fraction', fmt:'#,##0', color:S.greenText},
+      {label:'🟡  Minor Variance',         dealerFormula:countByDealerAndCol('J','Minor Variance'),
+        dealerPctFormula:e=>`IFERROR(COUNTIFS(${SOD}!$A$2:$A$100000,"${e}",${SOD}!$J$2:$J$100000,"Minor Variance")/COUNTIF(${SOD}!$A$2:$A$100000,"${e}"),0)`,
+        combinedFormula:countByCol('J','Minor Variance'),
+        combinedPctFormula:`IFERROR(COUNTIF(${SOD}!$J$2:$J$100000,"Minor Variance")/COUNTA(${SOD}!$A$2:$A$100000),0)`, pctMode:'fraction', fmt:'#,##0', color:S.blueText},
+      {label:'🔵  Excess Received',        dealerFormula:countByDealerAndCol('J','Excess Received'),
+        dealerPctFormula:e=>`IFERROR(COUNTIFS(${SOD}!$A$2:$A$100000,"${e}",${SOD}!$J$2:$J$100000,"Excess Received")/COUNTIF(${SOD}!$A$2:$A$100000,"${e}"),0)`,
+        combinedFormula:countByCol('J','Excess Received'),
+        combinedPctFormula:`IFERROR(COUNTIF(${SOD}!$J$2:$J$100000,"Excess Received")/COUNTA(${SOD}!$A$2:$A$100000),0)`, pctMode:'fraction', fmt:'#,##0', color:S.amberText},
+      {label:'🔴  Short Received',         dealerFormula:countByDealerAndCol('J','Short Received'),
+        dealerPctFormula:e=>`IFERROR(COUNTIFS(${SOD}!$A$2:$A$100000,"${e}",${SOD}!$J$2:$J$100000,"Short Received")/COUNTIF(${SOD}!$A$2:$A$100000,"${e}"),0)`,
+        combinedFormula:countByCol('J','Short Received'),
+        combinedPctFormula:`IFERROR(COUNTIF(${SOD}!$J$2:$J$100000,"Short Received")/COUNTA(${SOD}!$A$2:$A$100000),0)`, pctMode:'fraction', fmt:'#,##0', color:S.redText},
     ],
     wantsTotal: true,
     totalLabel: 'TOTAL DEALS',
@@ -18351,60 +18857,155 @@ function _cbBuildDashboard(ws, dealerNames, totalRows, rowsByDealer){
       combinedPair: ['Combined', '% Combined']
     },
     rows: [
-      {label:'🎯  In-Scope Deals',         dealerFormula:countByDealerAndCol('Z','In-scope'),
-        dealerPctFormula:e=>`IFERROR(COUNTIFS(${SOD}!$A$2:$A$100000,"${e}",${SOD}!$AA$2:$AA$100000,"In-scope")/COUNTIF(${SOD}!$A$2:$A$100000,"${e}"),0)`,
-        combinedFormula:countByCol('Z','In-scope'),
-        combinedPctFormula:`IFERROR(COUNTIF(${SOD}!$AA$2:$AA$100000,"In-scope")/COUNTA(${SOD}!$A$2:$A$100000),0)`, pctMode:'fraction', fmt:'#,##0'},
-      {label:'👔  Management Referral',     dealerFormula:countByDealerAndCol('Z','Management Referral'),
-        dealerPctFormula:e=>`IFERROR(COUNTIFS(${SOD}!$A$2:$A$100000,"${e}",${SOD}!$AA$2:$AA$100000,"Management Referral")/COUNTIF(${SOD}!$A$2:$A$100000,"${e}"),0)`,
-        combinedFormula:countByCol('Z','Management Referral'),
-        combinedPctFormula:`IFERROR(COUNTIF(${SOD}!$AA$2:$AA$100000,"Management Referral")/COUNTA(${SOD}!$A$2:$A$100000),0)`, pctMode:'fraction', fmt:'#,##0'},
-      {label:'🏭  OEM Referral',            dealerFormula:countByDealerAndCol('Z','OEM Referral'),
-        dealerPctFormula:e=>`IFERROR(COUNTIFS(${SOD}!$A$2:$A$100000,"${e}",${SOD}!$AA$2:$AA$100000,"OEM Referral")/COUNTIF(${SOD}!$A$2:$A$100000,"${e}"),0)`,
-        combinedFormula:countByCol('Z','OEM Referral'),
-        combinedPctFormula:`IFERROR(COUNTIF(${SOD}!$AA$2:$AA$100000,"OEM Referral")/COUNTA(${SOD}!$A$2:$A$100000),0)`, pctMode:'fraction', fmt:'#,##0'},
-      {label:'🚫  Out of Scope',           dealerFormula:countByDealerAndCol('Z','Out of Scope'),
-        dealerPctFormula:e=>`IFERROR(COUNTIFS(${SOD}!$A$2:$A$100000,"${e}",${SOD}!$AA$2:$AA$100000,"Out of Scope")/COUNTIF(${SOD}!$A$2:$A$100000,"${e}"),0)`,
-        combinedFormula:countByCol('Z','Out of Scope'),
-        combinedPctFormula:`IFERROR(COUNTIF(${SOD}!$AA$2:$AA$100000,"Out of Scope")/COUNTA(${SOD}!$A$2:$A$100000),0)`, pctMode:'fraction', fmt:'#,##0'},
+      {label:'🎯  In-Scope Deals',         dealerFormula:countByDealerAndCol('AC','In-scope'),
+        dealerPctFormula:e=>`IFERROR(COUNTIFS(${SOD}!$A$2:$A$100000,"${e}",${SOD}!$AC$2:$AC$100000,"In-scope")/COUNTIF(${SOD}!$A$2:$A$100000,"${e}"),0)`,
+        combinedFormula:countByCol('AC','In-scope'),
+        combinedPctFormula:`IFERROR(COUNTIF(${SOD}!$AC$2:$AC$100000,"In-scope")/COUNTA(${SOD}!$A$2:$A$100000),0)`, pctMode:'fraction', fmt:'#,##0'},
+      {label:'👔  Management Referral',     dealerFormula:countByDealerAndCol('AC','Management Referral'),
+        dealerPctFormula:e=>`IFERROR(COUNTIFS(${SOD}!$A$2:$A$100000,"${e}",${SOD}!$AC$2:$AC$100000,"Management Referral")/COUNTIF(${SOD}!$A$2:$A$100000,"${e}"),0)`,
+        combinedFormula:countByCol('AC','Management Referral'),
+        combinedPctFormula:`IFERROR(COUNTIF(${SOD}!$AC$2:$AC$100000,"Management Referral")/COUNTA(${SOD}!$A$2:$A$100000),0)`, pctMode:'fraction', fmt:'#,##0'},
+      {label:'🏭  OEM Referral',            dealerFormula:countByDealerAndCol('AC','OEM Referral'),
+        dealerPctFormula:e=>`IFERROR(COUNTIFS(${SOD}!$A$2:$A$100000,"${e}",${SOD}!$AC$2:$AC$100000,"OEM Referral")/COUNTIF(${SOD}!$A$2:$A$100000,"${e}"),0)`,
+        combinedFormula:countByCol('AC','OEM Referral'),
+        combinedPctFormula:`IFERROR(COUNTIF(${SOD}!$AC$2:$AC$100000,"OEM Referral")/COUNTA(${SOD}!$A$2:$A$100000),0)`, pctMode:'fraction', fmt:'#,##0'},
+      {label:'🚫  Out of Scope',           dealerFormula:countByDealerAndCol('AC','Out of Scope'),
+        dealerPctFormula:e=>`IFERROR(COUNTIFS(${SOD}!$A$2:$A$100000,"${e}",${SOD}!$AC$2:$AC$100000,"Out of Scope")/COUNTIF(${SOD}!$A$2:$A$100000,"${e}"),0)`,
+        combinedFormula:countByCol('AC','Out of Scope'),
+        combinedPctFormula:`IFERROR(COUNTIF(${SOD}!$AC$2:$AC$100000,"Out of Scope")/COUNTA(${SOD}!$A$2:$A$100000),0)`, pctMode:'fraction', fmt:'#,##0'},
     ],
     wantsTotal: true,
     totalLabel: 'TOTAL VEHICLES',
     totalFmt: '#,##0'
   });
 
-  // ── Section: PRODUCT PENETRATION ANALYSIS ──
-  // Uses the helper columns AF (Insurance), AH (Accessories), AG (Finance In-house), AI (RSA), AJ (EW)
+  // ── Section: PRODUCT PENETRATION ANALYSIS — CASE COUNT ──
+  // Helper flag columns (1/0 per row) — current layout: AL=Is Insurance,
+  // AM=Is Finance In-house, AN=Is Accessories, AO=Is RSA, AP=Is EW.
+  // (dealerFormula below previously pointed at stale pre-reorder letters —
+  // AF/AH/AG/AI/AJ — which is why dealer-wise Cases showed 0/garbage; the
+  // %/Combined formulas were already correct, which is why only the Cases
+  // column looked wrong.)
   const sumDealerFlag = (flagCol) => (e) => `SUMIFS(${SOD}!$${flagCol}$2:$${flagCol}$100000,${SOD}!$A$2:$A$100000,"${e}")`;
   cursor = buildTable({
     startRow: cursor,
-    banner: '🛡   PRODUCT PENETRATION ANALYSIS',
+    banner: '🛡   PRODUCT PENETRATION ANALYSIS — CASE COUNT',
     headerLabels: {
       rowLabel: 'Product',
       dealerPair: (d) => [d + ' Cases', d.split(/\s+/)[0] + ' Pen %'],
       combinedPair: ['Combined Cases', 'Combined Pen %']
     },
     rows: [
-      {label:'🛡  Insurance',          dealerFormula:sumDealerFlag('AF'),
-        dealerPctFormula:e=>`IFERROR(SUMIFS(${SOD}!$AJ$2:$AJ$100000,${SOD}!$A$2:$A$100000,"${e}")/COUNTIF(${SOD}!$A$2:$A$100000,"${e}"),0)`,
-        combinedFormula:`SUM(${SOD}!$AJ$2:$AJ$100000)`,
-        combinedPctFormula:`IFERROR(SUM(${SOD}!$AJ$2:$AJ$100000)/COUNTA(${SOD}!$A$2:$A$100000),0)`, pctMode:'fraction', fmt:'#,##0'},
-      {label:'🧰  Accessories Sold',   dealerFormula:sumDealerFlag('AH'),
+      {label:'🛡  Insurance',          dealerFormula:sumDealerFlag('AL'),
         dealerPctFormula:e=>`IFERROR(SUMIFS(${SOD}!$AL$2:$AL$100000,${SOD}!$A$2:$A$100000,"${e}")/COUNTIF(${SOD}!$A$2:$A$100000,"${e}"),0)`,
         combinedFormula:`SUM(${SOD}!$AL$2:$AL$100000)`,
         combinedPctFormula:`IFERROR(SUM(${SOD}!$AL$2:$AL$100000)/COUNTA(${SOD}!$A$2:$A$100000),0)`, pctMode:'fraction', fmt:'#,##0'},
-      {label:'💳  Finance (In-house)', dealerFormula:sumDealerFlag('AG'),
-        dealerPctFormula:e=>`IFERROR(SUMIFS(${SOD}!$AK$2:$AK$100000,${SOD}!$A$2:$A$100000,"${e}")/COUNTIF(${SOD}!$A$2:$A$100000,"${e}"),0)`,
-        combinedFormula:`SUM(${SOD}!$AK$2:$AK$100000)`,
-        combinedPctFormula:`IFERROR(SUM(${SOD}!$AK$2:$AK$100000)/COUNTA(${SOD}!$A$2:$A$100000),0)`, pctMode:'fraction', fmt:'#,##0'},
-      {label:'🚨  RSA (Road Side Assist.)', dealerFormula:sumDealerFlag('AI'),
-        dealerPctFormula:e=>`IFERROR(SUMIFS(${SOD}!$AM$2:$AM$100000,${SOD}!$A$2:$A$100000,"${e}")/COUNTIF(${SOD}!$A$2:$A$100000,"${e}"),0)`,
-        combinedFormula:`SUM(${SOD}!$AM$2:$AM$100000)`,
-        combinedPctFormula:`IFERROR(SUM(${SOD}!$AM$2:$AM$100000)/COUNTA(${SOD}!$A$2:$A$100000),0)`, pctMode:'fraction', fmt:'#,##0'},
-      {label:'📜  Extended Warranty',  dealerFormula:sumDealerFlag('AJ'),
+      {label:'🧰  Accessories Sold',   dealerFormula:sumDealerFlag('AN'),
         dealerPctFormula:e=>`IFERROR(SUMIFS(${SOD}!$AN$2:$AN$100000,${SOD}!$A$2:$A$100000,"${e}")/COUNTIF(${SOD}!$A$2:$A$100000,"${e}"),0)`,
         combinedFormula:`SUM(${SOD}!$AN$2:$AN$100000)`,
         combinedPctFormula:`IFERROR(SUM(${SOD}!$AN$2:$AN$100000)/COUNTA(${SOD}!$A$2:$A$100000),0)`, pctMode:'fraction', fmt:'#,##0'},
+      {label:'💳  Finance (In-house)', dealerFormula:sumDealerFlag('AM'),
+        dealerPctFormula:e=>`IFERROR(SUMIFS(${SOD}!$AM$2:$AM$100000,${SOD}!$A$2:$A$100000,"${e}")/COUNTIF(${SOD}!$A$2:$A$100000,"${e}"),0)`,
+        combinedFormula:`SUM(${SOD}!$AM$2:$AM$100000)`,
+        combinedPctFormula:`IFERROR(SUM(${SOD}!$AM$2:$AM$100000)/COUNTA(${SOD}!$A$2:$A$100000),0)`, pctMode:'fraction', fmt:'#,##0'},
+      {label:'🚨  RSA (Road Side Assist.)', dealerFormula:sumDealerFlag('AO'),
+        dealerPctFormula:e=>`IFERROR(SUMIFS(${SOD}!$AO$2:$AO$100000,${SOD}!$A$2:$A$100000,"${e}")/COUNTIF(${SOD}!$A$2:$A$100000,"${e}"),0)`,
+        combinedFormula:`SUM(${SOD}!$AO$2:$AO$100000)`,
+        combinedPctFormula:`IFERROR(SUM(${SOD}!$AO$2:$AO$100000)/COUNTA(${SOD}!$A$2:$A$100000),0)`, pctMode:'fraction', fmt:'#,##0'},
+      {label:'📜  Extended Warranty',  dealerFormula:sumDealerFlag('AP'),
+        dealerPctFormula:e=>`IFERROR(SUMIFS(${SOD}!$AP$2:$AP$100000,${SOD}!$A$2:$A$100000,"${e}")/COUNTIF(${SOD}!$A$2:$A$100000,"${e}"),0)`,
+        combinedFormula:`SUM(${SOD}!$AP$2:$AP$100000)`,
+        combinedPctFormula:`IFERROR(SUM(${SOD}!$AP$2:$AP$100000)/COUNTA(${SOD}!$A$2:$A$100000),0)`, pctMode:'fraction', fmt:'#,##0'},
+    ],
+    wantsTotal: false
+  });
+
+  // ── Section: PRODUCT PENETRATION ANALYSIS — AMOUNT ──
+  // Same product identification/classification as the Case Count report
+  // above (the exact same flag columns AL/AM/AN/AO/AP decide which rows
+  // count) — this view only changes what gets aggregated: ₹ amount instead
+  // of a case count. Insurance/Accessories/RSA/EW all have a ready-made ₹
+  // column in Combined Summary of Deal (P/O/S/R respectively), summed only
+  // for the rows the existing flag already marks as applicable. Finance
+  // (In-house) has no ₹ column in the SOD sheet, so its amount is summed
+  // directly from the underlying uploaded data (same "Finance Amount" field
+  // + aliases already used elsewhere in this tool) and written in as a
+  // pre-computed literal — everything else in this report stays formula-driven.
+  const _inrFmt = '[$₹-449]#,##0';
+  // Sum of the underlying "Finance Amount" field (with the app's existing
+  // header aliases) for In-House-financed deals only, per dealer.
+  function _cbFinanceAmountForRow(r){
+    const names = ['Finance Amount','Finance amount','Loan Amount','Loan amount','Financed Amount','Finance Amt'];
+    for(let i=0; i<names.length; i++){
+      const raw = _drLookup(actualHeaders, r, names[i]);
+      if(raw !== undefined && raw !== null && raw !== '' && raw !== '-'){
+        const f = parseFloat(String(raw).replace(/,/g,''));
+        if(!isNaN(f)) return f;
+      }
+    }
+    return 0;
+  }
+  const _cbFinanceAmtByDealer = {};
+  let _cbFinanceAmtCombined = 0;
+  dealerNames.forEach(d => {
+    const rows = rowsByDealer[d] || [];
+    let sum = 0;
+    rows.forEach(r => {
+      const financeType = (_drLookup(actualHeaders, r, 'Finance Type') || '').toString().trim();
+      if(financeType === 'In House') sum += _cbFinanceAmountForRow(r);
+    });
+    _cbFinanceAmtByDealer[d] = sum;
+    _cbFinanceAmtCombined += sum;
+  });
+  // Amount-based sum for a product, restricted to the same flag column used
+  // by the Case Count report (i.e. exactly the same applicable population).
+  const sumDealerAmount = (amtCol, flagCol) => (e) =>
+    `SUMIFS(${SOD}!$${amtCol}$2:$${amtCol}$100000,${SOD}!$A$2:$A$100000,"${e}",${SOD}!$${flagCol}$2:$${flagCol}$100000,1)`;
+  const combinedAmount = (amtCol, flagCol) =>
+    `SUMIF(${SOD}!$${flagCol}$2:$${flagCol}$100000,1,${SOD}!$${amtCol}$2:$${amtCol}$100000)`;
+  // Amount penetration % = product amount ÷ that dealer's Total Deal Value —
+  // the amount-basis analogue of the Case Count report's cases ÷ total deals.
+  const dealerAmountPct = (amtFormula) => (e) =>
+    `IFERROR((${amtFormula(e)})/SUMIF(${SOD}!$A$2:$A$100000,"${e}",${SOD}!$E$2:$E$100000),0)`;
+  const combinedAmountPct = (amtFormula) =>
+    `IFERROR((${amtFormula})/SUM(${SOD}!$E$2:$E$100000),0)`;
+
+  const insAmtDealer = sumDealerAmount('P','AL'), insAmtCombined = combinedAmount('P','AL');
+  const accAmtDealer = sumDealerAmount('O','AN'), accAmtCombined = combinedAmount('O','AN');
+  const rsaAmtDealer = sumDealerAmount('S','AO'), rsaAmtCombined = combinedAmount('S','AO');
+  const ewAmtDealer  = sumDealerAmount('R','AP'), ewAmtCombined  = combinedAmount('R','AP');
+  const finAmtDealer = (e) => String(_cbFinanceAmtByDealer[e] || 0);
+  const finAmtCombined = String(_cbFinanceAmtCombined || 0);
+
+  cursor = buildTable({
+    startRow: cursor,
+    banner: '🛡   PRODUCT PENETRATION ANALYSIS — AMOUNT',
+    headerLabels: {
+      rowLabel: 'Product',
+      dealerPair: (d) => [d + ' Amount (₹)', d.split(/\s+/)[0] + ' Pen %'],
+      combinedPair: ['Combined Amount (₹)', 'Combined Pen %']
+    },
+    rows: [
+      {label:'🛡  Insurance',          dealerFormula:insAmtDealer,
+        dealerPctFormula:dealerAmountPct(insAmtDealer),
+        combinedFormula:insAmtCombined,
+        combinedPctFormula:combinedAmountPct(insAmtCombined), pctMode:'fraction', fmt:_inrFmt},
+      {label:'🧰  Accessories Sold',   dealerFormula:accAmtDealer,
+        dealerPctFormula:dealerAmountPct(accAmtDealer),
+        combinedFormula:accAmtCombined,
+        combinedPctFormula:combinedAmountPct(accAmtCombined), pctMode:'fraction', fmt:_inrFmt},
+      {label:'💳  Finance (In-house)', dealerFormula:finAmtDealer,
+        dealerPctFormula:dealerAmountPct(finAmtDealer),
+        combinedFormula:finAmtCombined,
+        combinedPctFormula:combinedAmountPct(finAmtCombined), pctMode:'fraction', fmt:_inrFmt},
+      {label:'🚨  RSA (Road Side Assist.)', dealerFormula:rsaAmtDealer,
+        dealerPctFormula:dealerAmountPct(rsaAmtDealer),
+        combinedFormula:rsaAmtCombined,
+        combinedPctFormula:combinedAmountPct(rsaAmtCombined), pctMode:'fraction', fmt:_inrFmt},
+      {label:'📜  Extended Warranty',  dealerFormula:ewAmtDealer,
+        dealerPctFormula:dealerAmountPct(ewAmtDealer),
+        combinedFormula:ewAmtCombined,
+        combinedPctFormula:combinedAmountPct(ewAmtCombined), pctMode:'fraction', fmt:_inrFmt},
     ],
     wantsTotal: false
   });
@@ -18474,17 +19075,17 @@ function _cbBuildDashboard(ws, dealerNames, totalRows, rowsByDealer){
       dealerNames.forEach(d => {
         const escD = d.replace(/"/g,'""');
         // Count
-        ws.getCell(r, cc).value = {formula: `COUNTIFS(${SOD}!$A$2:$A$100000,"${escD}",${SOD}!$K$2:$K$100000,"${escRk}")`};
+        ws.getCell(r, cc).value = {formula: `COUNTIFS(${SOD}!$A$2:$A$100000,"${escD}",${SOD}!$M$2:$M$100000,"${escRk}")`};
         _adStyle(ws.getCell(r, cc), {fill:zebra, color:colors.color, bold:true, size:10, align:{h:'right', v:'center', indent:1}, fmt:'#,##0'});
         // Amount
-        ws.getCell(r, cc+1).value = {formula: `SUMIFS(${SOD}!$F$2:$F$100000,${SOD}!$A$2:$A$100000,"${escD}",${SOD}!$K$2:$K$100000,"${escRk}")`};
+        ws.getCell(r, cc+1).value = {formula: `SUMIFS(${SOD}!$F$2:$F$100000,${SOD}!$A$2:$A$100000,"${escD}",${SOD}!$M$2:$M$100000,"${escRk}")`};
         _adStyle(ws.getCell(r, cc+1), {fill:zebra, color:colors.color, bold:true, size:10, align:{h:'right', v:'center', indent:1}, fmt:'#,##0'});
         cc += 2;
       });
       // Combined Count + Amount
-      ws.getCell(r, cc).value = {formula: `COUNTIF(${SOD}!$K$2:$K$100000,"${escRk}")`};
+      ws.getCell(r, cc).value = {formula: `COUNTIF(${SOD}!$M$2:$M$100000,"${escRk}")`};
       _adStyle(ws.getCell(r, cc), {fill:zebra, color:colors.color, bold:true, size:10, align:{h:'right', v:'center', indent:1}, fmt:'#,##0'});
-      ws.getCell(r, cc+1).value = {formula: `SUMIF(${SOD}!$K$2:$K$100000,"${escRk}",${SOD}!$F$2:$F$100000)`};
+      ws.getCell(r, cc+1).value = {formula: `SUMIF(${SOD}!$M$2:$M$100000,"${escRk}",${SOD}!$F$2:$F$100000)`};
       _adStyle(ws.getCell(r, cc+1), {fill:zebra, color:colors.color, bold:true, size:10, align:{h:'right', v:'center', indent:1}, fmt:'#,##0'});
       ws.getRow(r).height = 21.75;
       r++;
@@ -18526,7 +19127,26 @@ function _cbBuildDashboard(ws, dealerNames, totalRows, rowsByDealer){
   }
 
   // ── Section: AUDITOR REVIEW STATUS ──
-  // Column AB = Review status (was Column1 / Sent Back Options)
+  // Column AE = Review status (Sent Back Options, defaults to "No Breach"
+  // when blank — see _cbBuildSummaryOfDeal). dealerFormula/combinedFormula
+  // below previously pointed at stale letter 'AB' (now Insurance Type, a
+  // text column that never matches "No Breach"/"Breach"/"Pending"), which is
+  // why Prime/Saini/Combined counts showed 0 — the %/Combined-of-% formulas
+  // were already correct against $AE$, which is why only the raw counts
+  // looked wrong. Fixed to 'AE' below, and added the "Sent Back" bucket the
+  // report was missing: it's whatever's left in a dealer's Review status
+  // column once the three named categories are subtracted out — the exact
+  // same "total minus known categories" pattern already used by the
+  // Variances row in AUDIT STATUS — RECONCILIATION SUMMARY above, so no new
+  // classification logic is introduced.
+  const sentBackDealerCount = (e) =>
+    `COUNTIF(${SOD}!$A$2:$A$100000,"${e}")-COUNTIFS(${SOD}!$A$2:$A$100000,"${e}",${SOD}!$AE$2:$AE$100000,"No Breach")-COUNTIFS(${SOD}!$A$2:$A$100000,"${e}",${SOD}!$AE$2:$AE$100000,"Breach")-COUNTIFS(${SOD}!$A$2:$A$100000,"${e}",${SOD}!$AE$2:$AE$100000,"Pending")`;
+  const sentBackCombinedCount =
+    `COUNTA(${SOD}!$A$2:$A$100000)-COUNTIF(${SOD}!$AE$2:$AE$100000,"No Breach")-COUNTIF(${SOD}!$AE$2:$AE$100000,"Breach")-COUNTIF(${SOD}!$AE$2:$AE$100000,"Pending")`;
+  const sentBackDealerPct = (e) =>
+    `IFERROR((${sentBackDealerCount(e)})/COUNTIF(${SOD}!$A$2:$A$100000,"${e}"),0)`;
+  const sentBackCombinedPct =
+    `IFERROR((${sentBackCombinedCount})/COUNTA(${SOD}!$A$2:$A$100000),0)`;
   cursor = buildTable({
     startRow: cursor,
     banner: '👨‍💼   AUDITOR REVIEW STATUS',
@@ -18536,25 +19156,42 @@ function _cbBuildDashboard(ws, dealerNames, totalRows, rowsByDealer){
       combinedPair: ['Combined', '% Combined']
     },
     rows: [
-      {label:'✅  No Breach', dealerFormula:countByDealerAndCol('AB','No Breach'),
-        dealerPctFormula:e=>`IFERROR(COUNTIFS(${SOD}!$A$2:$A$100000,"${e}",${SOD}!$AC$2:$AC$100000,"No Breach")/COUNTIF(${SOD}!$A$2:$A$100000,"${e}"),0)`,
-        combinedFormula:countByCol('AB','No Breach'),
-        combinedPctFormula:`IFERROR(COUNTIF(${SOD}!$AC$2:$AC$100000,"No Breach")/COUNTA(${SOD}!$A$2:$A$100000),0)`, pctMode:'fraction', fmt:'#,##0', color:S.greenText},
-      {label:'🚨  Breach',    dealerFormula:countByDealerAndCol('AB','Breach'),
-        dealerPctFormula:e=>`IFERROR(COUNTIFS(${SOD}!$A$2:$A$100000,"${e}",${SOD}!$AC$2:$AC$100000,"Breach")/COUNTIF(${SOD}!$A$2:$A$100000,"${e}"),0)`,
-        combinedFormula:countByCol('AB','Breach'),
-        combinedPctFormula:`IFERROR(COUNTIF(${SOD}!$AC$2:$AC$100000,"Breach")/COUNTA(${SOD}!$A$2:$A$100000),0)`, pctMode:'fraction', fmt:'#,##0', color:S.redText},
-      {label:'⏳  Pending',   dealerFormula:countByDealerAndCol('AB','Pending'),
-        dealerPctFormula:e=>`IFERROR(COUNTIFS(${SOD}!$A$2:$A$100000,"${e}",${SOD}!$AC$2:$AC$100000,"Pending")/COUNTIF(${SOD}!$A$2:$A$100000,"${e}"),0)`,
-        combinedFormula:countByCol('AB','Pending'),
-        combinedPctFormula:`IFERROR(COUNTIF(${SOD}!$AC$2:$AC$100000,"Pending")/COUNTA(${SOD}!$A$2:$A$100000),0)`, pctMode:'fraction', fmt:'#,##0', color:S.amberText},
+      {label:'✅  No Breach', dealerFormula:countByDealerAndCol('AE','No Breach'),
+        dealerPctFormula:e=>`IFERROR(COUNTIFS(${SOD}!$A$2:$A$100000,"${e}",${SOD}!$AE$2:$AE$100000,"No Breach")/COUNTIF(${SOD}!$A$2:$A$100000,"${e}"),0)`,
+        combinedFormula:countByCol('AE','No Breach'),
+        combinedPctFormula:`IFERROR(COUNTIF(${SOD}!$AE$2:$AE$100000,"No Breach")/COUNTA(${SOD}!$A$2:$A$100000),0)`, pctMode:'fraction', fmt:'#,##0', color:S.greenText},
+      {label:'🚨  Breach',    dealerFormula:countByDealerAndCol('AE','Breach'),
+        dealerPctFormula:e=>`IFERROR(COUNTIFS(${SOD}!$A$2:$A$100000,"${e}",${SOD}!$AE$2:$AE$100000,"Breach")/COUNTIF(${SOD}!$A$2:$A$100000,"${e}"),0)`,
+        combinedFormula:countByCol('AE','Breach'),
+        combinedPctFormula:`IFERROR(COUNTIF(${SOD}!$AE$2:$AE$100000,"Breach")/COUNTA(${SOD}!$A$2:$A$100000),0)`, pctMode:'fraction', fmt:'#,##0', color:S.redText},
+      {label:'⏳  Pending',   dealerFormula:countByDealerAndCol('AE','Pending'),
+        dealerPctFormula:e=>`IFERROR(COUNTIFS(${SOD}!$A$2:$A$100000,"${e}",${SOD}!$AE$2:$AE$100000,"Pending")/COUNTIF(${SOD}!$A$2:$A$100000,"${e}"),0)`,
+        combinedFormula:countByCol('AE','Pending'),
+        combinedPctFormula:`IFERROR(COUNTIF(${SOD}!$AE$2:$AE$100000,"Pending")/COUNTA(${SOD}!$A$2:$A$100000),0)`, pctMode:'fraction', fmt:'#,##0', color:S.amberText},
+      {label:'↩️  Sent Back', dealerFormula:sentBackDealerCount,
+        dealerPctFormula:sentBackDealerPct,
+        combinedFormula:sentBackCombinedCount,
+        combinedPctFormula:sentBackCombinedPct, pctMode:'fraction', fmt:'#,##0', color:S.textMute},
     ],
-    wantsTotal: false
+    wantsTotal: true,
+    totalLabel: 'TOTAL VEHICLES',
+    totalFmt: '#,##0'
   });
 
   // ── Section: PAYMENT RECONCILIATION SUMMARY — VARIANCE AMOUNTS ──
   // Per-dealer & combined: Count + Variance(₹) for each reconciliation
   // category. Uses two value columns per dealer instead of value+%.
+  // NOTE 1: dealerFormula/combinedFormula (the Count column) previously
+  // called countByDealerAndCol('H', ...) — a stale letter left over from
+  // before the column reorder (H is now Refund (₹), not Reconciliation
+  // Status, which is now J). Fixed to 'J' below, same fix already applied
+  // to AUDIT STATUS / DEAL CLASSIFICATION / AUDITOR REVIEW STATUS.
+  // NOTE 2: the second column (Variance ₹) is a currency SUM, not a
+  // percentage — it was previously marked pctMode:'fraction', which forces
+  // buildTable's hardcoded 0.00% format onto whatever raw number is there,
+  // turning e.g. 3866 into "386600.00%". Switched to pctMode:'amount' (see
+  // buildTable) so it renders as a real ₹ figure instead; the underlying
+  // SUMIFS formulas computing the variance amount are unchanged.
   cursor = buildTable({
     startRow: cursor,
     banner: '⚖   PAYMENT RECONCILIATION SUMMARY — VARIANCE AMOUNTS',
@@ -18564,26 +19201,28 @@ function _cbBuildDashboard(ws, dealerNames, totalRows, rowsByDealer){
       combinedPair: ['Combined Count', 'Combined Variance (₹)']
     },
     rows: [
-      {label:'✅  Matched (Zero Variance)', dealerFormula:countByDealerAndCol('H','Matched'),
-        dealerPctFormula:e=>`SUMIFS(${SOD}!$G$2:$G$100000,${SOD}!$A$2:$A$100000,"${e}",${SOD}!$H$2:$H$100000,"Matched")`,
-        combinedFormula:countByCol('H','Matched'),
-        combinedPctFormula:`SUMIF(${SOD}!$H$2:$H$100000,"Matched",${SOD}!$G$2:$G$100000)`, pctMode:'fraction', fmt:'#,##0', color:S.greenText},
-      {label:'🟡  Minor Variance (≤₹1,000)', dealerFormula:countByDealerAndCol('H','Minor Variance'),
-        dealerPctFormula:e=>`SUMIFS(${SOD}!$G$2:$G$100000,${SOD}!$A$2:$A$100000,"${e}",${SOD}!$H$2:$H$100000,"Minor Variance")`,
-        combinedFormula:countByCol('H','Minor Variance'),
-        combinedPctFormula:`SUMIF(${SOD}!$H$2:$H$100000,"Minor Variance",${SOD}!$G$2:$G$100000)`, pctMode:'fraction', fmt:'#,##0', color:S.blueText},
-      {label:'🔵  Excess Received (>₹1,000)', dealerFormula:countByDealerAndCol('H','Excess Received'),
-        dealerPctFormula:e=>`SUMIFS(${SOD}!$G$2:$G$100000,${SOD}!$A$2:$A$100000,"${e}",${SOD}!$H$2:$H$100000,"Excess Received")`,
-        combinedFormula:countByCol('H','Excess Received'),
-        combinedPctFormula:`SUMIF(${SOD}!$H$2:$H$100000,"Excess Received",${SOD}!$G$2:$G$100000)`, pctMode:'fraction', fmt:'#,##0', color:S.amberText},
-      {label:'🔴  Short Received (Underpaid)', dealerFormula:countByDealerAndCol('H','Short Received'),
-        dealerPctFormula:e=>`SUMIFS(${SOD}!$G$2:$G$100000,${SOD}!$A$2:$A$100000,"${e}",${SOD}!$H$2:$H$100000,"Short Received")`,
-        combinedFormula:countByCol('H','Short Received'),
-        combinedPctFormula:`SUMIF(${SOD}!$H$2:$H$100000,"Short Received",${SOD}!$G$2:$G$100000)`, pctMode:'fraction', fmt:'#,##0', color:S.redText},
+      {label:'✅  Matched (Zero Variance)', dealerFormula:countByDealerAndCol('J','Matched'),
+        dealerPctFormula:e=>`SUMIFS(${SOD}!$G$2:$G$100000,${SOD}!$A$2:$A$100000,"${e}",${SOD}!$J$2:$J$100000,"Matched")`,
+        combinedFormula:countByCol('J','Matched'),
+        combinedPctFormula:`SUMIF(${SOD}!$J$2:$J$100000,"Matched",${SOD}!$G$2:$G$100000)`, pctMode:'amount', pctFmt:_inrFmt, fmt:'#,##0', color:S.greenText},
+      {label:'🟡  Minor Variance (≤₹1,000)', dealerFormula:countByDealerAndCol('J','Minor Variance'),
+        dealerPctFormula:e=>`SUMIFS(${SOD}!$G$2:$G$100000,${SOD}!$A$2:$A$100000,"${e}",${SOD}!$J$2:$J$100000,"Minor Variance")`,
+        combinedFormula:countByCol('J','Minor Variance'),
+        combinedPctFormula:`SUMIF(${SOD}!$J$2:$J$100000,"Minor Variance",${SOD}!$G$2:$G$100000)`, pctMode:'amount', pctFmt:_inrFmt, fmt:'#,##0', color:S.blueText},
+      {label:'🔵  Excess Received (>₹1,000)', dealerFormula:countByDealerAndCol('J','Excess Received'),
+        dealerPctFormula:e=>`SUMIFS(${SOD}!$G$2:$G$100000,${SOD}!$A$2:$A$100000,"${e}",${SOD}!$J$2:$J$100000,"Excess Received")`,
+        combinedFormula:countByCol('J','Excess Received'),
+        combinedPctFormula:`SUMIF(${SOD}!$J$2:$J$100000,"Excess Received",${SOD}!$G$2:$G$100000)`, pctMode:'amount', pctFmt:_inrFmt, fmt:'#,##0', color:S.amberText},
+      {label:'🔴  Short Received (Underpaid)', dealerFormula:countByDealerAndCol('J','Short Received'),
+        dealerPctFormula:e=>`SUMIFS(${SOD}!$G$2:$G$100000,${SOD}!$A$2:$A$100000,"${e}",${SOD}!$J$2:$J$100000,"Short Received")`,
+        combinedFormula:countByCol('J','Short Received'),
+        combinedPctFormula:`SUMIF(${SOD}!$J$2:$J$100000,"Short Received",${SOD}!$G$2:$G$100000)`, pctMode:'amount', pctFmt:_inrFmt, fmt:'#,##0', color:S.redText},
     ],
     wantsTotal: true,
     totalLabel: 'GRAND TOTAL',
-    totalFmt: '#,##0'
+    totalFmt: '#,##0',
+    totalSecondColSum: true,
+    totalSecondFmt: _inrFmt
   });
 
   // ── Section: AVG PER CAR DISCOUNT (Discount above scheme) — BY SCOPE ──
@@ -18620,11 +19259,11 @@ function _cbBuildDashboard(ws, dealerNames, totalRows, rowsByDealer){
     let c2 = 3;
     dealerNames.forEach(d => {
       const escD = d.replace(/"/g,'""');
-      ws.getCell(r, c2).value = {formula:`IFERROR(SUMIFS(${SOD}!$X$2:$X$100000,${SOD}!$A$2:$A$100000,"${escD}",${SOD}!$AA$2:$AA$100000,"${sc[1]}")/COUNTIFS(${SOD}!$A$2:$A$100000,"${escD}",${SOD}!$AA$2:$AA$100000,"${sc[1]}"),0)`};
+      ws.getCell(r, c2).value = {formula:`IFERROR(SUMIFS(${SOD}!$Z$2:$Z$100000,${SOD}!$A$2:$A$100000,"${escD}",${SOD}!$AC$2:$AC$100000,"${sc[1]}")/COUNTIFS(${SOD}!$A$2:$A$100000,"${escD}",${SOD}!$AC$2:$AC$100000,"${sc[1]}"),0)`};
       _adStyle(ws.getCell(r, c2), {fill:zebra, color:'000000', size:10, align:{h:'right', v:'center', indent:1}, fmt:'#,##0'});
       c2++;
     });
-    ws.getCell(r, c2).value = {formula:`IFERROR(SUMIFS(${SOD}!$X$2:$X$100000,${SOD}!$AA$2:$AA$100000,"${sc[1]}")/COUNTIF(${SOD}!$AA$2:$AA$100000,"${sc[1]}"),0)`};
+    ws.getCell(r, c2).value = {formula:`IFERROR(SUMIFS(${SOD}!$Z$2:$Z$100000,${SOD}!$AC$2:$AC$100000,"${sc[1]}")/COUNTIF(${SOD}!$AC$2:$AC$100000,"${sc[1]}"),0)`};
     _adStyle(ws.getCell(r, c2), {fill:zebra, color:'000000', bold:true, size:10, align:{h:'right', v:'center', indent:1}, fmt:'#,##0'});
     ws.getRow(r).height = 21.75;
     r++;
@@ -18635,11 +19274,11 @@ function _cbBuildDashboard(ws, dealerNames, totalRows, rowsByDealer){
   let c3 = 3;
   dealerNames.forEach(d => {
     const escD = d.replace(/"/g,'""');
-    ws.getCell(r, c3).value = {formula:`IFERROR(AVERAGEIF(${SOD}!$A$2:$A$100000,"${escD}",${SOD}!$X$2:$X$100000),0)`};
+    ws.getCell(r, c3).value = {formula:`IFERROR(AVERAGEIF(${SOD}!$A$2:$A$100000,"${escD}",${SOD}!$Z$2:$Z$100000),0)`};
     _adStyle(ws.getCell(r, c3), {fill:S.navy, color:'FFFFFF', bold:true, size:10, align:{h:'right', v:'center', indent:1}, fmt:'#,##0'});
     c3++;
   });
-  ws.getCell(r, c3).value = {formula:`IFERROR(AVERAGE(${SOD}!$X$2:$X$100000),0)`};
+  ws.getCell(r, c3).value = {formula:`IFERROR(AVERAGE(${SOD}!$Z$2:$Z$100000),0)`};
   _adStyle(ws.getCell(r, c3), {fill:S.navy, color:'FFFFFF', bold:true, size:10, align:{h:'right', v:'center', indent:1}, fmt:'#,##0'});
   ws.getRow(r).height = 21.75;
   r++;
@@ -18760,38 +19399,38 @@ function _cbBuildPerCarAvg(ws, dealerNames, mode){
     // OVERALL block (C/D/E)
     if(isTotal){
       fmt(3, {formula:`COUNTA(${SOD}!$A$2:$A$100000)`}, false);
-      fmt(4, {formula:`IFERROR(SUM(${SOD}!$X$2:$X$100000)/C${rowNum},0)`}, false);
+      fmt(4, {formula:`IFERROR(SUM(${SOD}!$Z$2:$Z$100000)/C${rowNum},0)`}, false);
       fmt(5, 1, true);
     } else {
       fmt(3, {formula:`COUNTIF(${SOD}!$${sliceColLetter}$2:$${sliceColLetter}$100000,"${escV}")`}, false);
-      fmt(4, {formula:`IFERROR(SUMIF(${SOD}!$${sliceColLetter}$2:$${sliceColLetter}$100000,"${escV}",${SOD}!$X$2:$X$100000)/C${rowNum},0)`}, false);
+      fmt(4, {formula:`IFERROR(SUMIF(${SOD}!$${sliceColLetter}$2:$${sliceColLetter}$100000,"${escV}",${SOD}!$Z$2:$Z$100000)/C${rowNum},0)`}, false);
       fmt(5, {formula:`IFERROR(C${rowNum}/COUNTA(${SOD}!$A$2:$A$100000),0)`}, true);
     }
     // IN-SCOPE block (F/G/H)
     if(isTotal){
-      fmt(6, {formula:`COUNTIF(${SOD}!$AA$2:$AA$100000,"In-scope")`}, false);
-      fmt(7, {formula:`IFERROR(SUMIF(${SOD}!$AA$2:$AA$100000,"In-scope",${SOD}!$X$2:$X$100000)/F${rowNum},0)`}, false);
+      fmt(6, {formula:`COUNTIF(${SOD}!$AC$2:$AC$100000,"In-scope")`}, false);
+      fmt(7, {formula:`IFERROR(SUMIF(${SOD}!$AC$2:$AC$100000,"In-scope",${SOD}!$Z$2:$Z$100000)/F${rowNum},0)`}, false);
     } else {
-      fmt(6, {formula:`COUNTIFS(${SOD}!$${sliceColLetter}$2:$${sliceColLetter}$100000,"${escV}",${SOD}!$AA$2:$AA$100000,"In-scope")`}, false);
-      fmt(7, {formula:`IFERROR(SUMIFS(${SOD}!$X$2:$X$100000,${SOD}!$${sliceColLetter}$2:$${sliceColLetter}$100000,"${escV}",${SOD}!$AA$2:$AA$100000,"In-scope")/F${rowNum},0)`}, false);
+      fmt(6, {formula:`COUNTIFS(${SOD}!$${sliceColLetter}$2:$${sliceColLetter}$100000,"${escV}",${SOD}!$AC$2:$AC$100000,"In-scope")`}, false);
+      fmt(7, {formula:`IFERROR(SUMIFS(${SOD}!$Z$2:$Z$100000,${SOD}!$${sliceColLetter}$2:$${sliceColLetter}$100000,"${escV}",${SOD}!$AC$2:$AC$100000,"In-scope")/F${rowNum},0)`}, false);
     }
     fmt(8, {formula:`IFERROR(F${rowNum}/C${rowNum},0)`}, true);
     // OUT-OF-SCOPE block (I/J/K)
     if(isTotal){
-      fmt(9, {formula:`COUNTIF(${SOD}!$AA$2:$AA$100000,"Out of Scope")`}, false);
-      fmt(10, {formula:`IFERROR(SUMIF(${SOD}!$AA$2:$AA$100000,"Out of Scope",${SOD}!$X$2:$X$100000)/I${rowNum},0)`}, false);
+      fmt(9, {formula:`COUNTIF(${SOD}!$AC$2:$AC$100000,"Out of Scope")`}, false);
+      fmt(10, {formula:`IFERROR(SUMIF(${SOD}!$AC$2:$AC$100000,"Out of Scope",${SOD}!$Z$2:$Z$100000)/I${rowNum},0)`}, false);
     } else {
-      fmt(9, {formula:`COUNTIFS(${SOD}!$${sliceColLetter}$2:$${sliceColLetter}$100000,"${escV}",${SOD}!$AA$2:$AA$100000,"Out of Scope")`}, false);
-      fmt(10, {formula:`IFERROR(SUMIFS(${SOD}!$X$2:$X$100000,${SOD}!$${sliceColLetter}$2:$${sliceColLetter}$100000,"${escV}",${SOD}!$AA$2:$AA$100000,"Out of Scope")/I${rowNum},0)`}, false);
+      fmt(9, {formula:`COUNTIFS(${SOD}!$${sliceColLetter}$2:$${sliceColLetter}$100000,"${escV}",${SOD}!$AC$2:$AC$100000,"Out of Scope")`}, false);
+      fmt(10, {formula:`IFERROR(SUMIFS(${SOD}!$Z$2:$Z$100000,${SOD}!$${sliceColLetter}$2:$${sliceColLetter}$100000,"${escV}",${SOD}!$AC$2:$AC$100000,"Out of Scope")/I${rowNum},0)`}, false);
     }
     fmt(11, {formula:`IFERROR(I${rowNum}/C${rowNum},0)`}, true);
     // MR + OEM block (L/M/N) — combine Management Referral + OEM Referral
     if(isTotal){
-      fmt(12, {formula:`COUNTIF(${SOD}!$AA$2:$AA$100000,"Management Referral")+COUNTIF(${SOD}!$AA$2:$AA$100000,"OEM Referral")`}, false);
-      fmt(13, {formula:`IFERROR((SUMIF(${SOD}!$AA$2:$AA$100000,"Management Referral",${SOD}!$X$2:$X$100000)+SUMIF(${SOD}!$AA$2:$AA$100000,"OEM Referral",${SOD}!$X$2:$X$100000))/L${rowNum},0)`}, false);
+      fmt(12, {formula:`COUNTIF(${SOD}!$AC$2:$AC$100000,"Management Referral")+COUNTIF(${SOD}!$AC$2:$AC$100000,"OEM Referral")`}, false);
+      fmt(13, {formula:`IFERROR((SUMIF(${SOD}!$AC$2:$AC$100000,"Management Referral",${SOD}!$Z$2:$Z$100000)+SUMIF(${SOD}!$AC$2:$AC$100000,"OEM Referral",${SOD}!$Z$2:$Z$100000))/L${rowNum},0)`}, false);
     } else {
-      fmt(12, {formula:`COUNTIFS(${SOD}!$${sliceColLetter}$2:$${sliceColLetter}$100000,"${escV}",${SOD}!$AA$2:$AA$100000,"Management Referral")+COUNTIFS(${SOD}!$${sliceColLetter}$2:$${sliceColLetter}$100000,"${escV}",${SOD}!$AA$2:$AA$100000,"OEM Referral")`}, false);
-      fmt(13, {formula:`IFERROR((SUMIFS(${SOD}!$X$2:$X$100000,${SOD}!$${sliceColLetter}$2:$${sliceColLetter}$100000,"${escV}",${SOD}!$AA$2:$AA$100000,"Management Referral")+SUMIFS(${SOD}!$X$2:$X$100000,${SOD}!$${sliceColLetter}$2:$${sliceColLetter}$100000,"${escV}",${SOD}!$AA$2:$AA$100000,"OEM Referral"))/L${rowNum},0)`}, false);
+      fmt(12, {formula:`COUNTIFS(${SOD}!$${sliceColLetter}$2:$${sliceColLetter}$100000,"${escV}",${SOD}!$AC$2:$AC$100000,"Management Referral")+COUNTIFS(${SOD}!$${sliceColLetter}$2:$${sliceColLetter}$100000,"${escV}",${SOD}!$AC$2:$AC$100000,"OEM Referral")`}, false);
+      fmt(13, {formula:`IFERROR((SUMIFS(${SOD}!$Z$2:$Z$100000,${SOD}!$${sliceColLetter}$2:$${sliceColLetter}$100000,"${escV}",${SOD}!$AC$2:$AC$100000,"Management Referral")+SUMIFS(${SOD}!$Z$2:$Z$100000,${SOD}!$${sliceColLetter}$2:$${sliceColLetter}$100000,"${escV}",${SOD}!$AC$2:$AC$100000,"OEM Referral"))/L${rowNum},0)`}, false);
     }
     fmt(14, {formula:`IFERROR(L${rowNum}/C${rowNum},0)`}, true);
 
@@ -18890,19 +19529,19 @@ function _cbBuildDealerModelBreakup(ws, dealerNames, rowsByDealer){
     };
     // OVERALL (dealer-only)
     fmt(3, {formula:`COUNTIF(${SOD}!$A$2:$A$100000,"${escD}")`}, false);
-    fmt(4, {formula:`IFERROR(SUMIF(${SOD}!$A$2:$A$100000,"${escD}",${SOD}!$X$2:$X$100000)/C${parentRow},0)`}, false);
+    fmt(4, {formula:`IFERROR(SUMIF(${SOD}!$A$2:$A$100000,"${escD}",${SOD}!$Z$2:$Z$100000)/C${parentRow},0)`}, false);
     fmt(5, {formula:`IFERROR(C${parentRow}/COUNTA(${SOD}!$A$2:$A$100000),0)`}, true);
     // IN-SCOPE
-    fmt(6, {formula:`COUNTIFS(${SOD}!$A$2:$A$100000,"${escD}",${SOD}!$AA$2:$AA$100000,"In-scope")`}, false);
-    fmt(7, {formula:`IFERROR(SUMIFS(${SOD}!$X$2:$X$100000,${SOD}!$A$2:$A$100000,"${escD}",${SOD}!$AA$2:$AA$100000,"In-scope")/F${parentRow},0)`}, false);
+    fmt(6, {formula:`COUNTIFS(${SOD}!$A$2:$A$100000,"${escD}",${SOD}!$AC$2:$AC$100000,"In-scope")`}, false);
+    fmt(7, {formula:`IFERROR(SUMIFS(${SOD}!$Z$2:$Z$100000,${SOD}!$A$2:$A$100000,"${escD}",${SOD}!$AC$2:$AC$100000,"In-scope")/F${parentRow},0)`}, false);
     fmt(8, {formula:`IFERROR(F${parentRow}/C${parentRow},0)`}, true);
     // OUT OF SCOPE
-    fmt(9, {formula:`COUNTIFS(${SOD}!$A$2:$A$100000,"${escD}",${SOD}!$AA$2:$AA$100000,"Out of Scope")`}, false);
-    fmt(10, {formula:`IFERROR(SUMIFS(${SOD}!$X$2:$X$100000,${SOD}!$A$2:$A$100000,"${escD}",${SOD}!$AA$2:$AA$100000,"Out of Scope")/I${parentRow},0)`}, false);
+    fmt(9, {formula:`COUNTIFS(${SOD}!$A$2:$A$100000,"${escD}",${SOD}!$AC$2:$AC$100000,"Out of Scope")`}, false);
+    fmt(10, {formula:`IFERROR(SUMIFS(${SOD}!$Z$2:$Z$100000,${SOD}!$A$2:$A$100000,"${escD}",${SOD}!$AC$2:$AC$100000,"Out of Scope")/I${parentRow},0)`}, false);
     fmt(11, {formula:`IFERROR(I${parentRow}/C${parentRow},0)`}, true);
     // MR + OEM
-    fmt(12, {formula:`COUNTIFS(${SOD}!$A$2:$A$100000,"${escD}",${SOD}!$AA$2:$AA$100000,"Management Referral")+COUNTIFS(${SOD}!$A$2:$A$100000,"${escD}",${SOD}!$AA$2:$AA$100000,"OEM Referral")`}, false);
-    fmt(13, {formula:`IFERROR((SUMIFS(${SOD}!$X$2:$X$100000,${SOD}!$A$2:$A$100000,"${escD}",${SOD}!$AA$2:$AA$100000,"Management Referral")+SUMIFS(${SOD}!$X$2:$X$100000,${SOD}!$A$2:$A$100000,"${escD}",${SOD}!$AA$2:$AA$100000,"OEM Referral"))/L${parentRow},0)`}, false);
+    fmt(12, {formula:`COUNTIFS(${SOD}!$A$2:$A$100000,"${escD}",${SOD}!$AC$2:$AC$100000,"Management Referral")+COUNTIFS(${SOD}!$A$2:$A$100000,"${escD}",${SOD}!$AC$2:$AC$100000,"OEM Referral")`}, false);
+    fmt(13, {formula:`IFERROR((SUMIFS(${SOD}!$Z$2:$Z$100000,${SOD}!$A$2:$A$100000,"${escD}",${SOD}!$AC$2:$AC$100000,"Management Referral")+SUMIFS(${SOD}!$Z$2:$Z$100000,${SOD}!$A$2:$A$100000,"${escD}",${SOD}!$AC$2:$AC$100000,"OEM Referral"))/L${parentRow},0)`}, false);
     fmt(14, {formula:`IFERROR(L${parentRow}/C${parentRow},0)`}, true);
     ws.getRow(parentRow).height = 21.75;
     r++;
@@ -18927,16 +19566,16 @@ function _cbBuildDealerModelBreakup(ws, dealerNames, rowsByDealer){
         _adStyle(ws.getCell(childRow, cell), {fill:zebra, color:'374151', size:10, align:{h:'right', v:'center', indent:1}, fmt: isPct ? '0.00%' : '#,##0'});
       };
       fmt2(3, {formula:`COUNTIFS(${SOD}!$A$2:$A$100000,"${escD}",${SOD}!$C$2:$C$100000,"${escM}")`}, false);
-      fmt2(4, {formula:`IFERROR(SUMIFS(${SOD}!$X$2:$X$100000,${SOD}!$A$2:$A$100000,"${escD}",${SOD}!$C$2:$C$100000,"${escM}")/C${childRow},0)`}, false);
+      fmt2(4, {formula:`IFERROR(SUMIFS(${SOD}!$Z$2:$Z$100000,${SOD}!$A$2:$A$100000,"${escD}",${SOD}!$C$2:$C$100000,"${escM}")/C${childRow},0)`}, false);
       fmt2(5, {formula:`IFERROR(C${childRow}/COUNTIF(${SOD}!$A$2:$A$100000,"${escD}"),0)`}, true);
-      fmt2(6, {formula:`COUNTIFS(${SOD}!$A$2:$A$100000,"${escD}",${SOD}!$C$2:$C$100000,"${escM}",${SOD}!$AA$2:$AA$100000,"In-scope")`}, false);
-      fmt2(7, {formula:`IFERROR(SUMIFS(${SOD}!$X$2:$X$100000,${SOD}!$A$2:$A$100000,"${escD}",${SOD}!$C$2:$C$100000,"${escM}",${SOD}!$AA$2:$AA$100000,"In-scope")/F${childRow},0)`}, false);
+      fmt2(6, {formula:`COUNTIFS(${SOD}!$A$2:$A$100000,"${escD}",${SOD}!$C$2:$C$100000,"${escM}",${SOD}!$AC$2:$AC$100000,"In-scope")`}, false);
+      fmt2(7, {formula:`IFERROR(SUMIFS(${SOD}!$Z$2:$Z$100000,${SOD}!$A$2:$A$100000,"${escD}",${SOD}!$C$2:$C$100000,"${escM}",${SOD}!$AC$2:$AC$100000,"In-scope")/F${childRow},0)`}, false);
       fmt2(8, {formula:`IFERROR(F${childRow}/C${childRow},0)`}, true);
-      fmt2(9, {formula:`COUNTIFS(${SOD}!$A$2:$A$100000,"${escD}",${SOD}!$C$2:$C$100000,"${escM}",${SOD}!$AA$2:$AA$100000,"Out of Scope")`}, false);
-      fmt2(10, {formula:`IFERROR(SUMIFS(${SOD}!$X$2:$X$100000,${SOD}!$A$2:$A$100000,"${escD}",${SOD}!$C$2:$C$100000,"${escM}",${SOD}!$AA$2:$AA$100000,"Out of Scope")/I${childRow},0)`}, false);
+      fmt2(9, {formula:`COUNTIFS(${SOD}!$A$2:$A$100000,"${escD}",${SOD}!$C$2:$C$100000,"${escM}",${SOD}!$AC$2:$AC$100000,"Out of Scope")`}, false);
+      fmt2(10, {formula:`IFERROR(SUMIFS(${SOD}!$Z$2:$Z$100000,${SOD}!$A$2:$A$100000,"${escD}",${SOD}!$C$2:$C$100000,"${escM}",${SOD}!$AC$2:$AC$100000,"Out of Scope")/I${childRow},0)`}, false);
       fmt2(11, {formula:`IFERROR(I${childRow}/C${childRow},0)`}, true);
-      fmt2(12, {formula:`COUNTIFS(${SOD}!$A$2:$A$100000,"${escD}",${SOD}!$C$2:$C$100000,"${escM}",${SOD}!$AA$2:$AA$100000,"Management Referral")+COUNTIFS(${SOD}!$A$2:$A$100000,"${escD}",${SOD}!$C$2:$C$100000,"${escM}",${SOD}!$AA$2:$AA$100000,"OEM Referral")`}, false);
-      fmt2(13, {formula:`IFERROR((SUMIFS(${SOD}!$X$2:$X$100000,${SOD}!$A$2:$A$100000,"${escD}",${SOD}!$C$2:$C$100000,"${escM}",${SOD}!$AA$2:$AA$100000,"Management Referral")+SUMIFS(${SOD}!$X$2:$X$100000,${SOD}!$A$2:$A$100000,"${escD}",${SOD}!$C$2:$C$100000,"${escM}",${SOD}!$AA$2:$AA$100000,"OEM Referral"))/L${childRow},0)`}, false);
+      fmt2(12, {formula:`COUNTIFS(${SOD}!$A$2:$A$100000,"${escD}",${SOD}!$C$2:$C$100000,"${escM}",${SOD}!$AC$2:$AC$100000,"Management Referral")+COUNTIFS(${SOD}!$A$2:$A$100000,"${escD}",${SOD}!$C$2:$C$100000,"${escM}",${SOD}!$AC$2:$AC$100000,"OEM Referral")`}, false);
+      fmt2(13, {formula:`IFERROR((SUMIFS(${SOD}!$Z$2:$Z$100000,${SOD}!$A$2:$A$100000,"${escD}",${SOD}!$C$2:$C$100000,"${escM}",${SOD}!$AC$2:$AC$100000,"Management Referral")+SUMIFS(${SOD}!$Z$2:$Z$100000,${SOD}!$A$2:$A$100000,"${escD}",${SOD}!$C$2:$C$100000,"${escM}",${SOD}!$AC$2:$AC$100000,"OEM Referral"))/L${childRow},0)`}, false);
       fmt2(14, {formula:`IFERROR(L${childRow}/C${childRow},0)`}, true);
       ws.getRow(childRow).height = 19.5;
       r++;
@@ -18955,9 +19594,9 @@ function _cbBuildDealerModelBreakup(ws, dealerNames, rowsByDealer){
 function _cbBuildDealerLocationDiscount(ws, dealerNames, rowsByDealer){
   const S = _AD_STYLE;
   const SOD = "'Combined Summary of Deal'";
-  const LOC = 'AG';   // Location column in Combined Summary of Deal
-  const DISC = 'X';   // Discount above scheme
-  const SCOPE = 'AA'; // Deal Type (In-scope / Out of Scope / Management Referral / OEM Referral)
+  const LOC = 'AI';   // Location column in Combined Summary of Deal
+  const DISC = 'Z';   // Discount above scheme
+  const SCOPE = 'AC'; // Deal Type (In-scope / Out of Scope / Management Referral / OEM Referral)
 
   // Column widths
   ws.getColumn(1).width = 2;
