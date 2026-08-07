@@ -15409,7 +15409,28 @@ function _adAvgPerCarDisc(rowsList){
 // Main Report 2 builder. `m` is the metrics object from _adComputeMetrics
 // (which already has totals, counts, top models, benchmarks). We also
 // recompute a few things specific to Report 2's monthly breakdowns.
-function _adBuildReport2Sheet(ws, m, dealSheetName, headerColMap){
+function _adBuildReport2Sheet(ws, m, dealSheetName, headerColMap, totals){
+  // ── Dynamic Indian amount formatter (Lakh / Crore / full) ──
+  // Display-format helper ONLY — does not touch any calculation. Used for
+  // the amount-based KPI cards below, which are now written as static text
+  // values (not live formulas) so this exact scaling can be shown; see the
+  // KPI strip code further down for why (Excel's numFmt can only scale by
+  // powers of 1000 via trailing commas, so it cannot natively do ÷1,00,000
+  // or ÷1,00,00,000 — the only way to show real Lakh/Crore-scaled figures
+  // is to compute and write the display string directly).
+  //   < ₹1,00,000                      → full amount, Indian comma grouping
+  //   ₹1,00,000 to < ₹1,00,00,000      → Lakhs, 2 decimals ("₹41.87 L")
+  //   ≥ ₹1,00,00,000                   → Crores, 2 decimals ("₹16.17 Cr")
+  const _kpiFmt = (value) => {
+    const num = Number(value) || 0;
+    const neg = num < 0;
+    const abs = Math.abs(num);
+    let out;
+    if(abs >= 10000000)      out = (abs/10000000).toFixed(2) + ' Cr';
+    else if(abs >= 100000)   out = (abs/100000).toFixed(2) + ' L';
+    else                      out = Math.round(abs).toLocaleString('en-IN');
+    return '₹' + (neg ? '-' : '') + out;
+  };
   const S = _AD_STYLE;
   // The sheet name to reference for all SUMIF/COUNTIF/SUMIFS formulas.
   // Defaults to '1_Summary_of_Deal' (single-dealer download); the all-dealers
@@ -15519,47 +15540,46 @@ function _adBuildReport2Sheet(ws, m, dealSheetName, headerColMap){
 
   ws.getCell('B6').value={formula:`COUNTA(${SOD}!${col('Customer Name')}2:${col('Customer Name')}100000)`};
   _adStyle(ws.getCell('B6'), {fill:S.bgWhite, color:S.navy, bold:true, size:28, align:{h:'center', v:'center'}, fmt:'#,##0'});
-  ws.getCell('C6').value={formula:`SUM(${rng('Actual Deal Value (₹)')})/10000000`};
-  _adStyle(ws.getCell('C6'), {fill:S.bgWhite, color:S.navy, bold:true, size:20, align:{h:'center', v:'center'}, fmt:'0.00'});
-  ws.getCell('D6').value={formula:`SUM(${rng('Total Payment Receipts (₹)')})/10000000`};
-  _adStyle(ws.getCell('D6'), {fill:S.bgWhite, color:S.navy, bold:true, size:20, align:{h:'center', v:'center'}, fmt:'0.00'});
+  // ── Total Deal Value / Total Receipts — NOW static text (dynamic Lakh/Crore/full) ──
+  // Values come from `totals` (returned by _adBuildSummaryOfDealSheet, summed
+  // from the exact same per-row numbers written to the deal-summary sheet) —
+  // same underlying numbers as before, just displayed with the new dynamic
+  // scaling instead of a fixed /10000000 Crore-only formula.
+  const _t = totals || {count:0, dealVal:0, totRcpt:0, variance:0, refund:0, netVariance:0};
+  ws.getCell('C6').value = _kpiFmt(_t.dealVal);
+  _adStyle(ws.getCell('C6'), {fill:S.bgWhite, color:S.navy, bold:true, size:20, align:{h:'center', v:'center'}});
+  ws.getCell('D6').value = _kpiFmt(_t.totRcpt);
+  _adStyle(ws.getCell('D6'), {fill:S.bgWhite, color:S.navy, bold:true, size:20, align:{h:'center', v:'center'}});
 
-  // ── NEW KPI SERIES (v72) — Variance / Refund / Net Variance, totals + averages ──
-  // Columns resolved dynamically by header name ("Variance (₹)", "Refund (₹)")
-  // — no fixed letters. "Applicable Transactions" denominator = B6 (COUNTA of
-  // "Customer Name"), i.e. the exact same valid-deal population already used
-  // everywhere else on this dashboard (Total Deals Audited / Avg Deal Value /
-  // Avg Discount-Overall etc.), so Avg Variance / Avg Refund / Avg Net
-  // Variance are mathematically consistent with one another and with the
-  // rest of the report. Indian digit-grouping format ("₹"#,##,##0) renders
-  // e.g. ₹2,21,000 / ₹13,700 / ₹8,050 / ₹0 — never #REF!/undefined/NaN,
-  // since SUM()/IFERROR() always resolve to a number even on an empty sheet.
-  // Indian digit grouping (2,21,000 not 221,000) requires Excel's en-IN
-  // locale format code — a plain custom code like "₹"#,##,##0 renders as
-  // flat 3-digit Western grouping in real Excel (verified), not lakh/crore
-  // grouping. [$₹-449] is the LCID for India, which Excel's format engine
-  // uses to apply the correct 2-2-3 grouping automatically.
-  const _inrFmt = '[$₹-449]#,##0';
+  // ── KPI SERIES — Variance / Refund / Net Variance, totals + averages ──
+  // NOW static text values (dynamic Lakh/Crore/full formatting) instead of
+  // live formulas — see _kpiFmt() above for why: Excel's numFmt can't do
+  // true ÷1,00,000 / ÷1,00,00,000 scaling, and some of these cards were
+  // referenced by other cards' formulas (Net Variance = Variance − Refund,
+  // the three Avg cards ÷ B6), so converting only some of them to text
+  // would have broken those formulas. All of them now compute from `totals`
+  // in JS instead — the exact same underlying numbers, same denominator
+  // (Total Deals Audited = _t.count, matching B6) — just written as the
+  // final computed figure rather than as a live formula.
   // Row 1 — TOTAL VALUES
-  ws.getCell('E6').value={formula:`SUM(${rng('Variance (₹)')})`};
-  _adStyle(ws.getCell('E6'), {fill:S.bgWhite, color:S.navy, bold:true, size:14, align:{h:'center', v:'center'}, fmt:_inrFmt});
-  ws.getCell('F6').value={formula:`SUM(${rng('Refund (₹)')})`};
-  _adStyle(ws.getCell('F6'), {fill:S.bgWhite, color:S.navy, bold:true, size:14, align:{h:'center', v:'center'}, fmt:_inrFmt});
-  // Net Variance = Variance - Refund, computed from the two totals just above
-  ws.getCell('G6').value={formula:`E6-F6`};
-  // Colour is fixed at write time based on the computed metric (Excel itself
-  // can't change cell colour from a formula without conditional formatting).
-  // m.netVariance (= total receipts - total deal value) shares the same sign
-  // as the Variance total in the overwhelming majority of cases, so it's used
-  // here as the risk-colour signal, same convention as the rest of this sheet.
-  _adStyle(ws.getCell('G6'), {fill:S.bgWhite, color: m.netVariance < 0 ? S.redText : (m.netVariance > 0 ? S.amberText : S.greenText), bold:true, size:14, align:{h:'center', v:'center'}, fmt:_inrFmt});
-  // Row 2 — AVERAGE VALUES (same denominator B6 as every other avg KPI here)
-  ws.getCell('H6').value={formula:`IFERROR(E6/B6,0)`};
-  _adStyle(ws.getCell('H6'), {fill:S.bgWhite, color:S.navy, bold:true, size:14, align:{h:'center', v:'center'}, fmt:_inrFmt});
-  ws.getCell('I6').value={formula:`IFERROR(F6/B6,0)`};
-  _adStyle(ws.getCell('I6'), {fill:S.bgWhite, color:S.navy, bold:true, size:14, align:{h:'center', v:'center'}, fmt:_inrFmt});
-  ws.getCell('J6').value={formula:`IFERROR(G6/B6,0)`};
-  _adStyle(ws.getCell('J6'), {fill:S.bgWhite, color: m.netVariance < 0 ? S.redText : (m.netVariance > 0 ? S.amberText : S.greenText), bold:true, size:14, align:{h:'center', v:'center'}, fmt:_inrFmt});
+  ws.getCell('E6').value = _kpiFmt(_t.variance);
+  _adStyle(ws.getCell('E6'), {fill:S.bgWhite, color:S.navy, bold:true, size:14, align:{h:'center', v:'center'}});
+  ws.getCell('F6').value = _kpiFmt(_t.refund);
+  _adStyle(ws.getCell('F6'), {fill:S.bgWhite, color:S.navy, bold:true, size:14, align:{h:'center', v:'center'}});
+  // Net Variance = Variance - Refund (same formula as before, now evaluated in JS)
+  const _netVarTotal = _t.variance - _t.refund;
+  ws.getCell('G6').value = _kpiFmt(_netVarTotal);
+  _adStyle(ws.getCell('G6'), {fill:S.bgWhite, color: _netVarTotal < 0 ? S.redText : (_netVarTotal > 0 ? S.amberText : S.greenText), bold:true, size:14, align:{h:'center', v:'center'}});
+  // Row 2 — AVERAGE VALUES (same denominator B6/_t.count as every other avg KPI here)
+  const _avgVariance = _t.count ? _t.variance / _t.count : 0;
+  const _avgRefund    = _t.count ? _t.refund   / _t.count : 0;
+  const _avgNetVar     = _t.count ? _netVarTotal / _t.count : 0;
+  ws.getCell('H6').value = _kpiFmt(_avgVariance);
+  _adStyle(ws.getCell('H6'), {fill:S.bgWhite, color:S.navy, bold:true, size:14, align:{h:'center', v:'center'}});
+  ws.getCell('I6').value = _kpiFmt(_avgRefund);
+  _adStyle(ws.getCell('I6'), {fill:S.bgWhite, color:S.navy, bold:true, size:14, align:{h:'center', v:'center'}});
+  ws.getCell('J6').value = _kpiFmt(_avgNetVar);
+  _adStyle(ws.getCell('J6'), {fill:S.bgWhite, color: _avgNetVar < 0 ? S.redText : (_avgNetVar > 0 ? S.amberText : S.greenText), bold:true, size:14, align:{h:'center', v:'center'}});
 
   // L6..O6: counts of recon-status buckets (shifted from K-N to L-O to
   // align under the AUDIT STATUS box, which now starts at L). Resolved
@@ -15978,6 +15998,14 @@ function _adBuildReport2Sheet(ws, m, dealSheetName, headerColMap){
     ['Total FOC Accessories',         'FOC Accessories - Actual Amount',    r => _amt(r,'FOC Accessories - Actual Amount') > 0],
     // NEW — Total FOC EW: count of rows where "EW Discount - Actual Amount" > 0
     ['Total FOC EW',                  'EW Discount - Actual Amount',        r => _amt(r,'EW Discount - Actual Amount') > 0],
+    // NEW — Total Refund (Count): count of rows where Refund (₹) > 0.
+    // Refund (₹) is not a raw extractor column — it comes from the uploaded
+    // Payment Tracker (PV/CV), via the same _drGetPTForRow()._totalRefund
+    // lookup already used everywhere else in this file (e.g. the Summary of
+    // Deal sheet's Refund column, the KPI cards). If no tracker is loaded,
+    // or a booking has no tracker match, this safely resolves to 0 (not
+    // counted) — same graceful-degradation pattern as every other check here.
+    ['Total Refund (Count)',          'Refund (₹)',                         r => { const ptr = _drGetPTForRow(_H, r); return (ptr ? (ptr._totalRefund || 0) : 0) > 0; }],
   ];
   ws.getRow(33).height = 22;
   ws.mergeCells('L33:N33'); ws.getCell('L33').value='SOME OTHER IMPORTANT CHECKS';
@@ -16676,6 +16704,12 @@ function _adBuildSummaryOfDealSheet(ws, rowsList){
   // Trade-In rows, those BNs don't match the extractor bookings.
   let _diagTradeInMatches = 0;
   let _diagTradeInTotal = 0;
+  // NEW — accumulators for the KPI strip's now-static (non-formula) amount
+  // cards. Summed from the SAME per-row values already computed in this
+  // loop (dealVal/totRcpt/variance/refund/netVariance) — nothing here is a
+  // new/parallel calculation, it's just capturing totals of numbers that
+  // were already being computed and written to the sheet.
+  let _kpiSumDealVal = 0, _kpiSumTotRcpt = 0, _kpiSumVariance = 0, _kpiSumRefund = 0, _kpiSumNetVariance = 0;
   for(let i=0; i<rowsList.length; i++){
     const r = rowsList[i];
     const t = _drComputeTotals(H, r);
@@ -16683,11 +16717,9 @@ function _adBuildSummaryOfDealSheet(ws, rowsList){
     const ptr = _drGetPTForRow(H, r);
     const totRcpt = ptr ? (ptr._totalRcpt || 0) : fN(v(r,'Total payment receipts'));
     const variance = totRcpt - dealVal;
-    let reconStatus;
-    if(variance === 0)                  reconStatus = 'Matched';
-    else if(Math.abs(variance) <= 1000) reconStatus = 'Minor Variance';
-    else if(variance > 0)               reconStatus = 'Excess Received';
-    else                                 reconStatus = 'Short Received';
+    // Reconciliation Status is computed further below, once netVariance
+    // (= Variance − Refund) is available — see the new computation right
+    // after `const netVariance = variance - refund;`.
     let payVer = 0, payNotVer = 0, remark = 'Verification in Process';
     const refund = ptr ? (ptr._totalRefund || 0) : 0;
     if(ptr){
@@ -16794,6 +16826,21 @@ function _adBuildSummaryOfDealSheet(ws, rowsList){
     // blank/null (already guaranteed by `refund` being computed as a number
     // above, defaulting to 0).
     const netVariance = variance - refund;
+    _kpiSumDealVal += dealVal; _kpiSumTotRcpt += totRcpt; _kpiSumVariance += variance;
+    _kpiSumRefund += refund; _kpiSumNetVariance += netVariance;
+    // ── Reconciliation Status — NOW based on Net Variance only ──
+    // (Net Variance = Variance − Refund; Variance/Refund alone are no
+    // longer used to decide the status.) Replaces the old Variance-only
+    // logic — now based on Net Variance instead of raw Variance:
+    //   Net Variance = 0              → Matched
+    //   Net Variance > 1000           → Excess Received
+    //   Net Variance < -1000          → Short Received
+    //   -1000 to +1000 (excluding 0)  → Minor Variance
+    let reconStatus;
+    if(netVariance === 0)                    reconStatus = 'Matched';
+    else if(netVariance > 1000)              reconStatus = 'Excess Received';
+    else if(netVariance < -1000)             reconStatus = 'Short Received';
+    else                                       reconStatus = 'Minor Variance';
     // Main 33 columns (was 31 — Refund + Net variance inserted after Variance)
     const cells = [
       [1, custName,    'left',  null],
@@ -16966,7 +17013,17 @@ function _adBuildSummaryOfDealSheet(ws, rowsList){
   // Expose the header->column map so the caller can pass it into
   // _adBuildReport2Sheet(), which uses it to build all its cross-sheet
   // formulas dynamically by HEADER NAME instead of fixed column letters.
-  return { headers, headerColMap };
+  // `totals` (NEW) lets the KPI strip show static, Indian-Lakh/Crore
+  // formatted values instead of live formulas for the amount-based cards —
+  // same numbers, computed from the exact same per-row loop above.
+  return {
+    headers, headerColMap,
+    totals: {
+      count: rowsList.length,
+      dealVal: _kpiSumDealVal, totRcpt: _kpiSumTotRcpt,
+      variance: _kpiSumVariance, refund: _kpiSumRefund, netVariance: _kpiSumNetVariance
+    }
+  };
 }
 
 // ── Browser download of an ExcelJS workbook ──
@@ -17437,7 +17494,7 @@ async function exportAuditDashboardForCurrent(){
       views: [{showGridLines:false, zoomScale:90}],
       pageSetup: {paperSize:9, orientation:'landscape', fitToPage:true, fitToWidth:1, fitToHeight:0}
     });
-    _adBuildReport2Sheet(ws2, metrics, undefined, _sodInfo.headerColMap);
+    _adBuildReport2Sheet(ws2, metrics, undefined, _sodInfo.headerColMap, _sodInfo.totals);
     // Reorder so Dashboard appears first in the tab strip (UX nicety)
     wb.worksheets.sort((a, b) => {
       const order = (n) => n === 'Dashboard' ? 0 : (n === '1_Summary_of_Deal' ? 1 : 2);
@@ -17516,7 +17573,7 @@ async function exportAuditDashboardForAll(){
         views:[{showGridLines:false, zoomScale:90}],
         pageSetup: {paperSize:9, orientation:'landscape', fitToPage:true, fitToWidth:1, fitToHeight:0}
       });
-      _adBuildReport2Sheet(wsDash, m, nDeals, _sodInfo.headerColMap);
+      _adBuildReport2Sheet(wsDash, m, nDeals, _sodInfo.headerColMap, _sodInfo.totals);
     }
     // Master All-Deals sheet at the end (every deal across every dealer)
     const allWS = wb.addWorksheet('All_Deals', {views:[{showGridLines:true}]});
@@ -17607,7 +17664,7 @@ async function exportAuditDashboardPerDealerZip(){
         views:[{showGridLines:false, zoomScale:90}],
         pageSetup: {paperSize:9, orientation:'landscape', fitToPage:true, fitToWidth:1, fitToHeight:0}
       });
-      _adBuildReport2Sheet(wsDash, m, 'Deals', _sodInfo.headerColMap);
+      _adBuildReport2Sheet(wsDash, m, 'Deals', _sodInfo.headerColMap, _sodInfo.totals);
       // Put Dashboard first in the tab strip for readability
       wb.worksheets.sort((a,b) => (a.name==='Dashboard'?0:1) - (b.name==='Dashboard'?0:1));
 
@@ -18248,11 +18305,8 @@ function _cbBuildSummaryOfDeal(ws, dealerNames, rowsByDealer){
       const ptr = _drGetPTForRow(H, r);
       const totRcpt = ptr ? (ptr._totalRcpt || 0) : fN(v(r,'Total payment receipts'));
       const variance = totRcpt - dealVal;
-      let reconStatus;
-      if(variance === 0)                  reconStatus = 'Matched';
-      else if(Math.abs(variance) <= 1000) reconStatus = 'Minor Variance';
-      else if(variance > 0)               reconStatus = 'Excess Received';
-      else                                 reconStatus = 'Short Received';
+      // Reconciliation Status is computed further below, once netVariance
+      // (= Variance − Refund) is available.
       let payVer = 0, payNotVer = 0, remark = 'Verification in Process';
       const refund = ptr ? (ptr._totalRefund || 0) : 0;
       if(ptr){
@@ -18327,6 +18381,17 @@ function _cbBuildSummaryOfDeal(ws, dealerNames, rowsByDealer){
       // Net Variance = Variance (₹) − Refund (₹). Refund is 0 when blank/null
       // (already guaranteed by `refund` computed above).
       const netVariance = variance - refund;
+      // ── Reconciliation Status — NOW based on Net Variance only ──
+      // Same rule as the single-dealer SOD sheet:
+      //   Net Variance = 0              → Matched
+      //   Net Variance > 1000           → Excess Received
+      //   Net Variance < -1000          → Short Received
+      //   -1000 to +1000 (excluding 0)  → Minor Variance
+      let reconStatus;
+      if(netVariance === 0)                    reconStatus = 'Matched';
+      else if(netVariance > 1000)              reconStatus = 'Excess Received';
+      else if(netVariance < -1000)             reconStatus = 'Short Received';
+      else                                       reconStatus = 'Minor Variance';
       // 35 cells in display order (Refund + Net Variance now sit right after
       // Variance, columns H/I, matching the single-dealer report layout).
       // Helpers AL-AT added below as formulas.
