@@ -14698,6 +14698,12 @@ function _adComputeMetrics(rowsList, dealerName, dealerLocation){
   let varianceTotalMatched=0, varianceTotalMinor=0, varianceTotalExcess=0, varianceTotalShort=0;
   let inScope=0, mgmtRef=0, outScope=0, oemRef=0, sumInScopeDeal=0;
   let insCount=0, accCount=0, finCount=0, rsaCount=0, ewCount=0, totalAccessoriesValue=0;
+  // Dedicated Product Penetration Analysis counters (Cases = amount > 0).
+  // Kept separate from accCount/rsaCount/ewCount above (which use a >1
+  // threshold and feed the scorecard, benchmarks, leakage, and action-plan
+  // sections) so that the Product Penetration Analysis definition never
+  // alters any other KPI/section.
+  let penAccCount=0, penRsaCount=0, penEwCount=0;
   const modelAccBreakdown = {};
   // ── Month collection ──
   // Build a set of month numbers (1-12) actually present in the data so the
@@ -14744,6 +14750,10 @@ function _adComputeMetrics(rowsList, dealerName, dealerLocation){
     if((v(r,'Finance Type') || '').trim() === 'In House') finCount++;
     if(fN(v(r,'RSA - Actual Amount')) > 1) rsaCount++;
     if(fN(v(r,'EW - Actual Amount')) > 1 || fN(v(r,'Extended Warranty - Actual Amount')) > 1) ewCount++;
+    // Product Penetration Analysis — dedicated Cases logic (amount > 0)
+    if(fN(v(r,'Accessories')) > 0) penAccCount++;
+    if(fN(v(r,'RSA - Actual Amount')) > 0) penRsaCount++;
+    if(fN(v(r,'EW - Actual Amount')) > 0 || fN(v(r,'Extended Warranty - Actual Amount')) > 0) penEwCount++;
     const accVal = fN(v(r,'Accessories'));
     totalAccessoriesValue += accVal;
     const model = (v(r,'Model') || '(Blank)').trim();
@@ -14828,6 +14838,7 @@ function _adComputeMetrics(rowsList, dealerName, dealerLocation){
     exactMatchRate, exceptionRate, avgDealValue,
     inScope, mgmtRef, outScope, oemRef, avgInScopeValue, sumInScopeDeal,
     insCount, accCount, finCount, rsaCount, ewCount, totalAccessoriesValue,
+    penAccCount, penRsaCount, penEwCount,   // Product Penetration Analysis only — see declaration above
     top8, restTotal, restCount,
     modelAccAll: modelRanked,                   // [ [model, {total,count,sold}], ... ] sorted desc by revenue
     accSoldTotal: rowsList.reduce((s,r)=> s + (fN(_drLookup(H,r,'Accessories')) > 1 ? 1 : 0), 0),
@@ -14970,11 +14981,16 @@ function _adSec3_penetration(ws, m){
     if(pct >= 0.50) return ['⚠ Low Penetration', S.amberFill, S.amberDark];
     return ['🚩 Critical Gap', S.redFill, S.redDark];
   }
+  // Cases/Penetration % use the dedicated Product Penetration Analysis
+  // counters (penAccCount/penRsaCount/penEwCount = amount > 0). Insurance and
+  // Finance reuse insCount/finCount as-is — their existing definitions
+  // ('Insurance Type' = In-house, 'Finance Type' = In House) already match
+  // the spec exactly. Labels unchanged per spec (design/labels stay as-is).
   [['Insurance', m.insCount, m.total ? m.insCount/m.total : 0],
-   ['Accessories Sold', m.accCount, m.total ? m.accCount/m.total : 0],
+   ['Accessories Sold', m.penAccCount, m.total ? m.penAccCount/m.total : 0],
    ['Finance (Self-Arranged)', m.finCount, m.total ? m.finCount/m.total : 0],
-   ['RSA (Road Side Assistance)', m.rsaCount, m.total ? m.rsaCount/m.total : 0],
-   ['Extended Warranty (EW)', m.ewCount, m.total ? m.ewCount/m.total : 0]].forEach((row, i) => {
+   ['RSA (Road Side Assistance)', m.penRsaCount, m.total ? m.penRsaCount/m.total : 0],
+   ['Extended Warranty (EW)', m.penEwCount, m.total ? m.penEwCount/m.total : 0]].forEach((row, i) => {
     const rowNum = 18+i, zebra = i%2===1 ? S.bgZebra : S.bgWhite;
     [2,3,4,5].forEach(col => { ws.getCell(rowNum, col).fill = {type:'pattern', pattern:'solid', fgColor:{argb: _adARGB(zebra)}}; });
     ws.getCell(rowNum, 2).value = row[0]; _adStyle(ws.getCell(rowNum,2), {fill:zebra, color:S.textDark, size:10, align:{h:'left', v:'center', indent:1}});
@@ -15748,54 +15764,47 @@ function _adBuildReport2Sheet(ws, m, dealSheetName, headerColMap, totals){
   ws.getColumn(5).width = Math.max(ws.getColumn(5).width||10, 16);
   ['Remark Category','','Count','Total Variance (₹)'].forEach((t,i) => { const c=ws.getCell(18, 12+i); c.value=t; _adStyle(c, {fill:S.greyHead, color:'FFFFFF', bold:true, size:9, align:{h:'left', v:'center', indent:1}}); });
 
-  // ── Market-average penetration (average across ALL dealerships) ──
-  // For each product we compute every dealership's own penetration rate
-  // (cases ÷ that dealer's deal count) and then take the simple average of
-  // those rates — i.e. an equal-weighted "average of all the dealerships",
-  // not an overall pooled rate. Uses the full dataset (actualRows), not just
-  // the current dealer's filtered rows.
+  // ── Market-average penetration (pooled across ALL dealerships) ──
+  // PRODUCT PENETRATION ANALYSIS spec:
+  //   Market Avg Penetration % = All Dealers Product Qualifying Count / All Dealers Total Deal Count × 100
+  // i.e. one pooled count divided by one pooled denominator (the SAME
+  // All-Dealers-Total-Deal-Count for every product) — NOT an average of each
+  // dealership's own percentage. Uses the full dataset (actualRows), not
+  // just the current dealer's filtered rows. This block only feeds the
+  // Market Avg column of the Product Penetration Analysis table below —
+  // it does not affect any other KPI or section.
   const _mktAvg = (() => {
     const out = {INS:0, ACC:0, FIN:0, RSA:0, EW:0};
     try {
-      const dIdx = actualHeaders.indexOf('Dealership');
       const lk = (r, name) => _drLookup(actualHeaders, r, name);
-      // Group rows by dealership
-      const byDealer = {};
-      (actualRows || []).forEach(r => {
-        const d = dIdx >= 0 ? (r[dIdx] || '').toString().trim() : 'All';
-        if(!d) return;
-        (byDealer[d] = byDealer[d] || []).push(r);
+      const rows = actualRows || [];
+      const allDealersTotal = rows.length;
+      if(!allDealersTotal) return out;
+      let ins=0, acc=0, fin=0, rsa=0, ew=0;
+      rows.forEach(r => {
+        if((lk(r,'Insurance Type')||'').trim() === 'Inhouse') ins++;
+        if(fN(lk(r,'Accessories')) > 0) acc++;
+        if((lk(r,'Finance Type')||'').trim() === 'In House') fin++;
+        if(fN(lk(r,'RSA - Actual Amount')) > 0) rsa++;
+        if(fN(lk(r,'EW - Actual Amount')) > 0 || fN(lk(r,'Extended Warranty - Actual Amount')) > 0) ew++;
       });
-      const dealers = Object.keys(byDealer);
-      if(dealers.length === 0) return out;
-      const sums = {INS:0, ACC:0, FIN:0, RSA:0, EW:0};
-      dealers.forEach(d => {
-        const rows = byDealer[d];
-        const n = rows.length || 1;
-        let ins=0, acc=0, fin=0, rsa=0, ew=0;
-        rows.forEach(r => {
-          if((lk(r,'Insurance Type')||'').trim() === 'Inhouse') ins++;
-          if(fN(lk(r,'Accessories')) > 1) acc++;
-          if((lk(r,'Finance Type')||'').trim() === 'In House') fin++;
-          if(fN(lk(r,'RSA - Actual Amount')) > 1) rsa++;
-          if(fN(lk(r,'EW - Actual Amount')) > 1 || fN(lk(r,'Extended Warranty - Actual Amount')) > 1) ew++;
-        });
-        sums.INS += ins/n; sums.ACC += acc/n; sums.FIN += fin/n; sums.RSA += rsa/n; sums.EW += ew/n;
-      });
-      const k = dealers.length;
-      out.INS = sums.INS/k; out.ACC = sums.ACC/k; out.FIN = sums.FIN/k; out.RSA = sums.RSA/k; out.EW = sums.EW/k;
+      out.INS = ins/allDealersTotal; out.ACC = acc/allDealersTotal; out.FIN = fin/allDealersTotal;
+      out.RSA = rsa/allDealersTotal; out.EW = ew/allDealersTotal;
     } catch(e){ /* fall back to zeros */ }
     return out;
   })();
 
-  // Penetration: helper columns resolved dynamically by header name
-  // ("Is Insurance"/"Is Finance In-house"/"Is Accessories"/"Is RSA"/"Is EW")
-  // — no fixed letters, immune to future column reorders.
-  [['Insurance',                   'Is Insurance',         m.insCount, _mktAvg.INS],
-   ['Accessories Sold',            'Is Accessories',       m.accCount, _mktAvg.ACC],
-   ['Finance (In-house)',          'Is Finance In-house',  m.finCount, _mktAvg.FIN],
-   ['RSA (Road Side Assistance)',  'Is RSA',                m.rsaCount, _mktAvg.RSA],
-   ['Extended Warranty (EW)',      'Is EW',                 m.ewCount, _mktAvg.EW]].forEach((row, i) => {
+  // Penetration: helper columns resolved dynamically by header name.
+  // Insurance/Finance reuse the existing 'Is Insurance'/'Is Finance In-house'
+  // columns (their definitions already match spec exactly). Accessories/RSA/EW
+  // use the dedicated 'Pen Is *' columns (Cases = amount > 0) added specifically
+  // for this table, so no other section/KPI that reads the original
+  // 'Is Accessories'/'Is RSA'/'Is EW' (>1 threshold) columns is affected.
+  [['Insurance',                   'Is Insurance',         m.insCount,    _mktAvg.INS],
+   ['Accessories Sold',            'Pen Is Accessories',   m.penAccCount, _mktAvg.ACC],
+   ['Finance (In-house)',          'Is Finance In-house',  m.finCount,    _mktAvg.FIN],
+   ['RSA (Road Side Assistance)',  'Pen Is RSA',            m.penRsaCount, _mktAvg.RSA],
+   ['Extended Warranty (EW)',      'Pen Is EW',             m.penEwCount,  _mktAvg.EW]].forEach((row, i) => {
     const rowNum = 18+i, zebra = i%2===1 ? S.bgZebra : S.bgWhite;
     const helperHeader = row[1];                        // helper column header name in SOD
     const pct = m.total ? row[2]/m.total : 0;          // for Penetration % colour at write time
@@ -15810,7 +15819,7 @@ function _adBuildReport2Sheet(ws, m, dealSheetName, headerColMap, totals){
     ws.getCell(rowNum, 4).value = {formula:`IFERROR(C${rowNum}/$C$15,0)`};
     const pctColor = pct >= 0.80 ? S.greenText : pct >= 0.50 ? S.amberText : S.redText;
     _adStyle(ws.getCell(rowNum,4), {fill:zebra, color:pctColor, bold:true, size:10, align:{h:'right', v:'center', indent:1}, fmt:'0.00%'});
-    // Market Avg Penetration % — equal-weighted average across all dealerships
+    // Market Avg Penetration % — pooled: All Dealers Qualifying Rows / All Dealers Total Row Data Count
     ws.getCell(rowNum, 5).value = mkt;
     _adStyle(ws.getCell(rowNum,5), {fill:zebra, color:S.textMute, bold:true, size:10, align:{h:'right', v:'center', indent:1}, fmt:'0.00%'});
   });
@@ -15892,8 +15901,8 @@ function _adBuildReport2Sheet(ws, m, dealSheetName, headerColMap, totals){
     // F Accessories Revenue = SUMIFS(Accessories (₹), Model=model)
     ws.getCell(rowNum, 6).value = {formula:`SUMIFS(${rng('Accessories (₹)')},${rng('Model')},"${escModel}")`};
     _adStyle(ws.getCell(rowNum,6), {fill:zebra, color:S.textDark, bold:true, size:10, align:{h:'right', v:'center', indent:1}, fmt:'₹#,##0'});
-    // G Avg / Car = Revenue / Accessories Sold
-    ws.getCell(rowNum, 7).value = {formula:`IFERROR(F${rowNum}/D${rowNum},0)`};
+    // G Avg / Car = Revenue / Deals (per user confirmation — C = Deals)
+    ws.getCell(rowNum, 7).value = {formula:`IFERROR(F${rowNum}/C${rowNum},0)`};
     _adStyle(ws.getCell(rowNum,7), {fill:zebra, color:S.textDark, size:10, align:{h:'right', v:'center', indent:1}, fmt:'₹#,##0'});
     // H % Share = Revenue / total accessories revenue
     ws.getCell(rowNum, 8).value = {formula:`IFERROR(F${rowNum}/SUM(${rng('Accessories (₹)')}),0)`};
@@ -15915,7 +15924,8 @@ function _adBuildReport2Sheet(ws, m, dealSheetName, headerColMap, totals){
     _adStyle(ws.getCell(rowNum,5), {fill:zebra, color:S.textMute, size:10, align:{h:'center', v:'center'}, fmt:'0.0%'});
     ws.getCell(rowNum, 6).value = {formula:`SUM(${rng('Accessories (₹)')})-SUM(F${firstRev}:F${lastRev})`};
     _adStyle(ws.getCell(rowNum,6), {fill:zebra, color:S.textMute, bold:true, size:10, align:{h:'right', v:'center', indent:1}, fmt:'₹#,##0'});
-    ws.getCell(rowNum, 7).value = {formula:`IFERROR(F${rowNum}/D${rowNum},0)`};
+    // G Avg / Car = Revenue / Deals (per user confirmation — C = Deals)
+    ws.getCell(rowNum, 7).value = {formula:`IFERROR(F${rowNum}/C${rowNum},0)`};
     _adStyle(ws.getCell(rowNum,7), {fill:zebra, color:S.textMute, size:10, align:{h:'right', v:'center', indent:1}, fmt:'₹#,##0'});
     ws.getCell(rowNum, 8).value = {formula:`IFERROR(F${rowNum}/SUM(${rng('Accessories (₹)')}),0)`};
     _adStyle(ws.getCell(rowNum,8), {fill:zebra, color:S.textMute, size:10, align:{h:'center', v:'center'}, fmt:'0.0%'});
@@ -15929,7 +15939,8 @@ function _adBuildReport2Sheet(ws, m, dealSheetName, headerColMap, totals){
   ws.getCell(totalRowNum, 4).value={formula:`SUM(D${_firstData}:D${_lastData})`};
   ws.getCell(totalRowNum, 5).value={formula:`IFERROR(D${totalRowNum}/C${totalRowNum},0)`};
   ws.getCell(totalRowNum, 6).value={formula:`SUM(${rng('Accessories (₹)')})`};
-  ws.getCell(totalRowNum, 7).value={formula:`IFERROR(F${totalRowNum}/D${totalRowNum},0)`};
+  // G Avg / Car = Revenue / Deals (per user confirmation — C = Deals)
+  ws.getCell(totalRowNum, 7).value={formula:`IFERROR(F${totalRowNum}/C${totalRowNum},0)`};
   ws.getCell(totalRowNum, 8).value=1;
   [2,3,4,5,6,7,8].forEach(c => _adStyle(ws.getCell(totalRowNum, c), {
     fill:S.navy, color:'FFFFFF', bold:true, size:10,
@@ -15950,7 +15961,12 @@ function _adBuildReport2Sheet(ws, m, dealSheetName, headerColMap, totals){
     ['Finance (In-house) %',      (mo) => `IFERROR(SUMIFS(${rng('Is Finance In-house')},${rng('Month')},${mo})/COUNTIFS(${rng('Month')},${mo}),0)`,                 true,  '0.00%'],
     ['EW Penetration %',          (mo) => `IFERROR(SUMIFS(${rng('Is EW')},${rng('Month')},${mo})/COUNTIFS(${rng('Month')},${mo}),0)`,                               true,  '0.00%'],
     ['RSA Penetration %',         (mo) => `IFERROR(SUMIFS(${rng('Is RSA')},${rng('Month')},${mo})/COUNTIFS(${rng('Month')},${mo}),0)`,                              true,  '0.00%'],
-    ['Accessories per Car (₹)',   (mo) => `IFERROR(SUMIFS(${rng('Accessories (₹)')},${rng('Month')},${mo})/COUNTIFS(${rng('Month')},${mo},${rng('Accessories (₹)')},">0"),0)`, false, '#,##0']
+    // Accessories per Car (₹) = plain AVERAGE of the whole 'Accessories (₹)'
+    // column (no month filter, no >0 filter) — per explicit instruction.
+    // rng('Accessories (₹)') resolves by header name to that column, never
+    // a hardcoded letter. NOTE: since this ignores the month condition, both
+    // month columns in this row will show the same overall-average value.
+    ['Accessories per Car (₹)',   (mo) => `IFERROR(AVERAGE(${rng('Accessories (₹)')}),0)`, false, '#,##0']
   ];
   mpt.forEach((row, i) => {
     const rowNum = 26+i, zebra = i%2===1 ? S.bgZebra : S.bgWhite;
@@ -16628,6 +16644,9 @@ function _adBuildSummaryOfDealSheet(ws, rowsList){
   // AQ: Is Minor (I = 'Minor Variance' → 1 else 0)
   // AR: Is Excess (I = 'Excess Received' → 1 else 0)
   // AS: Is Short (I = 'Short Received' → 1 else 0)
+  // AT: Pen Is Accessories (N > 0 → 1 else 0) — Product Penetration Analysis only
+  // AU: Pen Is RSA (R > 0 → 1 else 0) — Product Penetration Analysis only
+  // AV: Pen Is EW (Q > 0 → 1 else 0) — Product Penetration Analysis only
   // NOTE: The old trailing "Refund (₹)" column (formerly AR/44) has been
   // removed — it now lives at column G, right after Variance, per spec.
   const widths = [
@@ -16644,7 +16663,8 @@ function _adBuildSummaryOfDealSheet(ws, rowsList){
     28, 14, 14,    // AC-AE: Auditors Remarks, Review status, Booking Number
     14, 12,        // AF-AG: Trade-In Receipt, Receipt Mismatch
     18,            // AH: Location
-    8, 14, 8, 10, 8, 8, 8, 8, 8, 8, 8  // AI-AS: helpers
+    8, 14, 8, 10, 8, 8, 8, 8, 8, 8, 8,  // AI-AS: helpers
+    10, 8, 8       // AT-AV: Pen Is Accessories, Pen Is RSA, Pen Is EW
   ];
   widths.forEach((w, i) => { ws.getColumn(i+1).width = w; });
 
@@ -16670,12 +16690,18 @@ function _adBuildSummaryOfDealSheet(ws, rowsList){
     'Receipt Mismatch',                      // AG
     'Location',                              // AH
     // Helper headers — slightly different styling
-    'Month','In-Scope Deal Value','Is Insurance','Is Finance In-house','Is Accessories','Is RSA','Is EW','Is Matched','Is Minor','Is Excess','Is Short'
+    'Month','In-Scope Deal Value','Is Insurance','Is Finance In-house','Is Accessories','Is RSA','Is EW','Is Matched','Is Minor','Is Excess','Is Short',
+    // Product Penetration Analysis — dedicated helper flags (Cases = amount > 0).
+    // Kept SEPARATE from 'Is Accessories'/'Is RSA'/'Is EW' above (which use a
+    // >1 threshold and are relied on by the Monthly Performance Trend Tracker
+    // and other sections) so that changing the Product Penetration Analysis
+    // definition never alters any other KPI/section.
+    'Pen Is Accessories','Pen Is RSA','Pen Is EW'
   ];
   headers.forEach((h, i) => {
     ws.getCell(1, i+1).value = h;
-    // Main columns get navy; helpers (AI-AS = 35-45) get grey.
-    const isHelper = i >= 34 && i <= 44;
+    // Main columns get navy; helpers (AI-AV = 35-48) get grey.
+    const isHelper = i >= 34 && i <= 47;
     _adStyle(ws.getCell(1, i+1), {
       fill: isHelper ? S.greyHead : S.navy,
       color:'FFFFFF', bold:true, size: isHelper ? 9 : 10,
@@ -16960,10 +16986,16 @@ function _adBuildSummaryOfDealSheet(ws, rowsList){
     fHelper(44, `IF(I${rowNum}="Excess Received",1,0)`, '0');
     // AS (45): Is Short
     fHelper(45, `IF(I${rowNum}="Short Received",1,0)`, '0');
+    // AT (46): Pen Is Accessories = IF(N>0,1,0) — Product Penetration Analysis only
+    fHelper(46, `IF(N${rowNum}>0,1,0)`, '0');
+    // AU (47): Pen Is RSA = IF(R>0,1,0) — Product Penetration Analysis only
+    fHelper(47, `IF(R${rowNum}>0,1,0)`, '0');
+    // AV (48): Pen Is EW = IF(Q>0,1,0) — Product Penetration Analysis only
+    fHelper(48, `IF(Q${rowNum}>0,1,0)`, '0');
   }
 
-  // Auto-filter spans all 45 columns now (34 main + 11 helpers)
-  ws.autoFilter = {from: {row:1, column:1}, to: {row:1, column:45}};
+  // Auto-filter spans all 48 columns now (34 main + 11 helpers + 3 Pen-helpers)
+  ws.autoFilter = {from: {row:1, column:1}, to: {row:1, column:48}};
 
   // ── Diagnostic: Trade-In match status ──
   // If the tracker shows Trade-In rows in the global panel but every cell
@@ -18257,6 +18289,9 @@ function _cbBuildSummaryOfDeal(ws, dealerNames, rowsByDealer){
     {width:8},  // AR Is Minor
     {width:9},  // AS Is Excess
     {width:8},  // AT Is Short
+    {width:11}, // AU Pen Is Accessories
+    {width:8},  // AV Pen Is RSA
+    {width:8},  // AW Pen Is EW
   ];
 
 
@@ -18277,7 +18312,12 @@ function _cbBuildSummaryOfDeal(ws, dealerNames, rowsByDealer){
     'Trade-In Receipt (₹)',
     'Receipt Mismatch',
     'Location',
-    'Month','In-Scope Deal Value','Is Insurance','Is Finance In-house','Is Accessories','Is RSA','Is EW','Is Matched','Is Minor','Is Excess','Is Short'
+    'Month','In-Scope Deal Value','Is Insurance','Is Finance In-house','Is Accessories','Is RSA','Is EW','Is Matched','Is Minor','Is Excess','Is Short',
+    // Product Penetration Analysis — dedicated helper flags (Cases = amount > 0).
+    // Kept SEPARATE from 'Is Accessories'/'Is RSA'/'Is EW' (>1 threshold, relied
+    // on by the Monthly Performance Trend Tracker and other sections) so the
+    // Product Penetration Analysis definition never alters any other KPI.
+    'Pen Is Accessories','Pen Is RSA','Pen Is EW'
   ];
   headers.forEach((h, i) => {
     const c = ws.getCell(1, i+1);
@@ -18504,12 +18544,18 @@ function _cbBuildSummaryOfDeal(ws, dealerNames, rowsByDealer){
       fHelper(45, `IF(J${outRow}="Excess Received",1,0)`, '0');
       // AT (46): Is Short
       fHelper(46, `IF(J${outRow}="Short Received",1,0)`, '0');
+      // AU (47): Pen Is Accessories = IF(O>0,1,0) — Product Penetration Analysis only
+      fHelper(47, `IF(O${outRow}>0,1,0)`, '0');
+      // AV (48): Pen Is RSA = IF(S>0,1,0) — Product Penetration Analysis only
+      fHelper(48, `IF(S${outRow}>0,1,0)`, '0');
+      // AW (49): Pen Is EW = IF(R>0,1,0) — Product Penetration Analysis only
+      fHelper(49, `IF(R${outRow}>0,1,0)`, '0');
       outRow++;
     });
   });
 
-  // Auto-filter on all 46 columns
-  ws.autoFilter = {from:{row:1, column:1}, to:{row:1, column:46}};
+  // Auto-filter on all 49 columns
+  ws.autoFilter = {from:{row:1, column:1}, to:{row:1, column:49}};
 
   // ── Data-validation drop-down on Remarks column (M) ──
   // Same 9-option list as the single-dealer Summary of Deal sheet. Note the
@@ -18947,10 +18993,15 @@ function _cbBuildDashboard(ws, dealerNames, totalRows, rowsByDealer){
   // ── Section: PRODUCT PENETRATION ANALYSIS — CASE COUNT ──
   // Helper flag columns (1/0 per row) — current layout: AL=Is Insurance,
   // AM=Is Finance In-house, AN=Is Accessories, AO=Is RSA, AP=Is EW.
-  // (dealerFormula below previously pointed at stale pre-reorder letters —
-  // AF/AH/AG/AI/AJ — which is why dealer-wise Cases showed 0/garbage; the
-  // %/Combined formulas were already correct, which is why only the Cases
-  // column looked wrong.)
+  // Accessories/RSA/EW below now point at the dedicated Product Penetration
+  // Analysis columns (AU=Pen Is Accessories, AV=Pen Is RSA, AW=Pen Is EW —
+  // Cases = amount > 0) instead of AN/AO/AP (>1 threshold), so this section's
+  // definition matches the spec without touching any other KPI that still
+  // reads AN/AO/AP. Insurance/Finance (AL/AM) are unchanged — their existing
+  // definitions already match the spec exactly.
+  // Combined Pen % here is already the pooled formula SUM(flag)/COUNTA(A) —
+  // i.e. exactly "All Dealers Product Qualifying Count / All Dealers Total
+  // Deal Count", matching the Market Avg definition in the spec.
   const sumDealerFlag = (flagCol) => (e) => `SUMIFS(${SOD}!$${flagCol}$2:$${flagCol}$100000,${SOD}!$A$2:$A$100000,"${e}")`;
   cursor = buildTable({
     startRow: cursor,
@@ -18965,29 +19016,29 @@ function _cbBuildDashboard(ws, dealerNames, totalRows, rowsByDealer){
         dealerPctFormula:e=>`IFERROR(SUMIFS(${SOD}!$AL$2:$AL$100000,${SOD}!$A$2:$A$100000,"${e}")/COUNTIF(${SOD}!$A$2:$A$100000,"${e}"),0)`,
         combinedFormula:`SUM(${SOD}!$AL$2:$AL$100000)`,
         combinedPctFormula:`IFERROR(SUM(${SOD}!$AL$2:$AL$100000)/COUNTA(${SOD}!$A$2:$A$100000),0)`, pctMode:'fraction', fmt:'#,##0'},
-      {label:'🧰  Accessories Sold',   dealerFormula:sumDealerFlag('AN'),
-        dealerPctFormula:e=>`IFERROR(SUMIFS(${SOD}!$AN$2:$AN$100000,${SOD}!$A$2:$A$100000,"${e}")/COUNTIF(${SOD}!$A$2:$A$100000,"${e}"),0)`,
-        combinedFormula:`SUM(${SOD}!$AN$2:$AN$100000)`,
-        combinedPctFormula:`IFERROR(SUM(${SOD}!$AN$2:$AN$100000)/COUNTA(${SOD}!$A$2:$A$100000),0)`, pctMode:'fraction', fmt:'#,##0'},
+      {label:'🧰  Accessories Sold',   dealerFormula:sumDealerFlag('AU'),
+        dealerPctFormula:e=>`IFERROR(SUMIFS(${SOD}!$AU$2:$AU$100000,${SOD}!$A$2:$A$100000,"${e}")/COUNTIF(${SOD}!$A$2:$A$100000,"${e}"),0)`,
+        combinedFormula:`SUM(${SOD}!$AU$2:$AU$100000)`,
+        combinedPctFormula:`IFERROR(SUM(${SOD}!$AU$2:$AU$100000)/COUNTA(${SOD}!$A$2:$A$100000),0)`, pctMode:'fraction', fmt:'#,##0'},
       {label:'💳  Finance (In-house)', dealerFormula:sumDealerFlag('AM'),
         dealerPctFormula:e=>`IFERROR(SUMIFS(${SOD}!$AM$2:$AM$100000,${SOD}!$A$2:$A$100000,"${e}")/COUNTIF(${SOD}!$A$2:$A$100000,"${e}"),0)`,
         combinedFormula:`SUM(${SOD}!$AM$2:$AM$100000)`,
         combinedPctFormula:`IFERROR(SUM(${SOD}!$AM$2:$AM$100000)/COUNTA(${SOD}!$A$2:$A$100000),0)`, pctMode:'fraction', fmt:'#,##0'},
-      {label:'🚨  RSA (Road Side Assist.)', dealerFormula:sumDealerFlag('AO'),
-        dealerPctFormula:e=>`IFERROR(SUMIFS(${SOD}!$AO$2:$AO$100000,${SOD}!$A$2:$A$100000,"${e}")/COUNTIF(${SOD}!$A$2:$A$100000,"${e}"),0)`,
-        combinedFormula:`SUM(${SOD}!$AO$2:$AO$100000)`,
-        combinedPctFormula:`IFERROR(SUM(${SOD}!$AO$2:$AO$100000)/COUNTA(${SOD}!$A$2:$A$100000),0)`, pctMode:'fraction', fmt:'#,##0'},
-      {label:'📜  Extended Warranty',  dealerFormula:sumDealerFlag('AP'),
-        dealerPctFormula:e=>`IFERROR(SUMIFS(${SOD}!$AP$2:$AP$100000,${SOD}!$A$2:$A$100000,"${e}")/COUNTIF(${SOD}!$A$2:$A$100000,"${e}"),0)`,
-        combinedFormula:`SUM(${SOD}!$AP$2:$AP$100000)`,
-        combinedPctFormula:`IFERROR(SUM(${SOD}!$AP$2:$AP$100000)/COUNTA(${SOD}!$A$2:$A$100000),0)`, pctMode:'fraction', fmt:'#,##0'},
+      {label:'🚨  RSA (Road Side Assist.)', dealerFormula:sumDealerFlag('AV'),
+        dealerPctFormula:e=>`IFERROR(SUMIFS(${SOD}!$AV$2:$AV$100000,${SOD}!$A$2:$A$100000,"${e}")/COUNTIF(${SOD}!$A$2:$A$100000,"${e}"),0)`,
+        combinedFormula:`SUM(${SOD}!$AV$2:$AV$100000)`,
+        combinedPctFormula:`IFERROR(SUM(${SOD}!$AV$2:$AV$100000)/COUNTA(${SOD}!$A$2:$A$100000),0)`, pctMode:'fraction', fmt:'#,##0'},
+      {label:'📜  Extended Warranty',  dealerFormula:sumDealerFlag('AW'),
+        dealerPctFormula:e=>`IFERROR(SUMIFS(${SOD}!$AW$2:$AW$100000,${SOD}!$A$2:$A$100000,"${e}")/COUNTIF(${SOD}!$A$2:$A$100000,"${e}"),0)`,
+        combinedFormula:`SUM(${SOD}!$AW$2:$AW$100000)`,
+        combinedPctFormula:`IFERROR(SUM(${SOD}!$AW$2:$AW$100000)/COUNTA(${SOD}!$A$2:$A$100000),0)`, pctMode:'fraction', fmt:'#,##0'},
     ],
     wantsTotal: false
   });
 
   // ── Section: PRODUCT PENETRATION ANALYSIS — AMOUNT ──
   // Same product identification/classification as the Case Count report
-  // above (the exact same flag columns AL/AM/AN/AO/AP decide which rows
+  // above (the exact same flag columns AL/AM/AU/AV/AW decide which rows
   // count) — this view only changes what gets aggregated: ₹ amount instead
   // of a case count. Insurance/Accessories/RSA/EW all have a ready-made ₹
   // column in Combined Summary of Deal (P/O/S/R respectively), summed only
@@ -19035,10 +19086,13 @@ function _cbBuildDashboard(ws, dealerNames, totalRows, rowsByDealer){
   const combinedAmountPct = (amtFormula) =>
     `IFERROR((${amtFormula})/SUM(${SOD}!$E$2:$E$100000),0)`;
 
+  // Accessories/RSA/EW gate on the dedicated Pen Is * columns (AU/AV/AW,
+  // amount > 0) so the "applicable" population matches the Case Count report
+  // above and the spec's Cases definition. Insurance/Finance unchanged.
   const insAmtDealer = sumDealerAmount('P','AL'), insAmtCombined = combinedAmount('P','AL');
-  const accAmtDealer = sumDealerAmount('O','AN'), accAmtCombined = combinedAmount('O','AN');
-  const rsaAmtDealer = sumDealerAmount('S','AO'), rsaAmtCombined = combinedAmount('S','AO');
-  const ewAmtDealer  = sumDealerAmount('R','AP'), ewAmtCombined  = combinedAmount('R','AP');
+  const accAmtDealer = sumDealerAmount('O','AU'), accAmtCombined = combinedAmount('O','AU');
+  const rsaAmtDealer = sumDealerAmount('S','AV'), rsaAmtCombined = combinedAmount('S','AV');
+  const ewAmtDealer  = sumDealerAmount('R','AW'), ewAmtCombined  = combinedAmount('R','AW');
   const finAmtDealer = (e) => String(_cbFinanceAmtByDealer[e] || 0);
   const finAmtCombined = String(_cbFinanceAmtCombined || 0);
 
